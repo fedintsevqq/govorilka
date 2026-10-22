@@ -1,7 +1,10 @@
 ## Скачать
 
 - **Windows 10/11** — `Govorilka-…-windows-x64.exe`. Установка не нужна, просто запустите.
-- **macOS 14+ на Apple Silicon (M1–M4)** — `Govorilka-…-macos-arm64.dmg`. Откройте и перетащите Говорилку в «Программы».
+- **Mac на Apple Silicon (M1–M4), macOS 14+** — `Govorilka-…-macos-apple-silicon.dmg`.
+- **Mac на Intel, macOS 13+** — `Govorilka-…-macos-intel.dmg`.
+
+Какой у вас чип, видно в меню  → «Об этом Mac». Откройте `.dmg` и перетащите Говорилку в «Программы».
 
 При первой записи приложение скачает модель распознавания GigaAM (около 850 МБ). Дальше всё работает без интернета.
 

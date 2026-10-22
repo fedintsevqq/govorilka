@@ -53,9 +53,20 @@ jobs:
           path: dist/Govorilka-*-windows-x64.exe
 
   macos:
-    runs-on: macos-14  # Apple Silicon
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64  # Apple Silicon
+            runner: macos-14
+            min_os: "14.0"
+          - arch: x86_64  # Intel
+            runner: macos-15-intel
+            min_os: "13.0"
+    runs-on: ${{ matrix.runner }}
     env:
       GOVORILKA_DATA_DIR: ${{ github.workspace }}/ci-data
+      GOVORILKA_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,7 +75,7 @@ jobs:
       - name: Build system audio helper (Swift)
         run: |
           mkdir -p bin
-          swiftc -O -target arm64-apple-macos14.0 mac/audiotap.swift -o bin/govorilka-audiotap
+          swiftc -O -target ${{ matrix.arch }}-apple-macos${{ matrix.min_os }} mac/audiotap.swift -o bin/govorilka-audiotap
       - name: Smoke-test helper (must answer, not crash)
         run: |
           set +e
@@ -87,7 +98,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ci-data/models
-          key: ${{ env.MODEL_CACHE_KEY }}
+          key: ${{ env.MODEL_CACHE_KEY }}-${{ runner.os }}-${{ matrix.arch }}
       - name: Self-test app (real model on test speech)
         run: |
           set +e
@@ -97,15 +108,16 @@ jobs:
           exit $code
       - name: Build dmg
         run: |
-          name="Govorilka-${GOVORILKA_VERSION:-dev}-macos-arm64.dmg"
+          suffix=$([ "$GOVORILKA_ARCH" = arm64 ] && echo apple-silicon || echo intel)
+          name="Govorilka-${GOVORILKA_VERSION:-dev}-macos-$suffix.dmg"
           mkdir dmg
           cp -R dist/Govorilka.app dmg/
           ln -s /Applications dmg/Applications
           hdiutil create -volname "Govorilka" -srcfolder dmg -ov -format UDZO "dist/$name"
       - uses: actions/upload-artifact@v4
         with:
-          name: macos
-          path: dist/Govorilka-*-macos-arm64.dmg
+          name: macos-${{ matrix.arch }}
+          path: dist/Govorilka-*-macos-*.dmg
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

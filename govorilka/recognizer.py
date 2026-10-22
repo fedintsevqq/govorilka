@@ -26,7 +26,8 @@ class Recognizer:
         target = MODELS_DIR / model_name
         on_status("Загружаю модель…" if target.exists() else "Скачиваю модель (один раз, ~850 МБ)…")
         try:
-            self._model = onnx_asr.load_model(model_name, target)
+            # только CPU: на macOS onnx-asr сам включает CoreML, а он падает на энкодере GigaAM
+            self._model = onnx_asr.load_model(model_name, target, providers=["CPUExecutionProvider"])
         except Exception as exc:  # onnx-asr бросает свои исключения и ошибки сети
             raise RecognizerError(f"Не загрузил модель {model_name}: {exc}") from exc
         self._lock = threading.Lock()

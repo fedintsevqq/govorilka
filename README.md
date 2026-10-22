@@ -11,14 +11,17 @@
 
 Распознаёт модель **GigaAM v3** от Сбера (та же, что в Handy). Она сама ставит знаки препинания и заглавные буквы. Работает на процессоре: 8 секунд речи распознаёт примерно за 0.1 секунды. Видеокарта не нужна.
 
-Работает на **Windows 10/11** и **macOS 14+ на Apple Silicon** (M1–M4).
+Работает на **Windows 10/11** и на Mac: **Apple Silicon** (M1–M4, macOS 14+) и **Intel** (macOS 13+).
 
 ## Установка
 
 Скачайте файл для своей системы со страницы [Releases](https://github.com/fedintsevqq/govorilka/releases/latest):
 
 - Windows — `Govorilka-…-windows-x64.exe`, запускается без установки;
-- Mac — `Govorilka-…-macos-arm64.dmg`, перетащите Говорилку в «Программы».
+- Mac на Apple Silicon (M1–M4) — `Govorilka-…-macos-apple-silicon.dmg`;
+- Mac на Intel — `Govorilka-…-macos-intel.dmg`.
+
+На Mac откройте `.dmg` и перетащите Говорилку в «Программы». Какой у вас чип, видно в меню  → «Об этом Mac».
 
 При первой записи приложение скачает модель (около 850 МБ). Дальше интернет не нужен.
 
@@ -93,7 +96,7 @@ install.bat
 Govorilka.bat
 ```
 
-Mac (нужны Python 3.12 с python.org и Xcode Command Line Tools):
+Mac (нужны Python 3.12 с python.org и Xcode Command Line Tools; на Intel поставится onnxruntime 1.23.2):
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt

@@ -8,6 +8,8 @@ from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 IS_MAC = sys.platform == "darwin"
 VERSION = os.environ.get("GOVORILKA_VERSION", "0.0.0")
+MAC_ARCH = os.environ.get("GOVORILKA_ARCH", "arm64")  # arm64 — Apple Silicon, x86_64 — Intel
+MAC_MIN_OS = "13.0" if MAC_ARCH == "x86_64" else "14.0"  # под onnxruntime для своей архитектуры
 
 datas = collect_data_files("onnx_asr")  # предобработчики звука в .onnx лежат внутри пакета
 # onnx_asr и huggingface_hub при импорте читают версии пакетов через importlib.metadata
@@ -36,7 +38,7 @@ if IS_MAC:
         exclude_binaries=True,
         name="Govorilka",
         console=False,
-        target_arch="arm64",
+        target_arch=MAC_ARCH,
     )
     coll = COLLECT(exe, a.binaries, a.datas, name="Govorilka")
     app = BUNDLE(
@@ -47,7 +49,7 @@ if IS_MAC:
         info_plist={
             "CFBundleDisplayName": "Говорилка",
             "CFBundleShortVersionString": VERSION,
-            "LSMinimumSystemVersion": "14.0",
+            "LSMinimumSystemVersion": MAC_MIN_OS,
             "NSHighResolutionCapable": True,
             "NSMicrophoneUsageDescription": "Говорилка записывает ваш голос, чтобы расшифровать созвон.",
             "NSAppleEventsUsageDescription": "Говорилка открывает Терминал, чтобы передать транскрипт в Claude Code.",
