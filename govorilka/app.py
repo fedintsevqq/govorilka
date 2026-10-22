@@ -105,7 +105,7 @@ class App:
         ttk.Button(bottom, text="Папка с записями", command=self.open_folder).pack(side="left")
 
         self.status_var = tk.StringVar(value="Готово. Нажмите «Начать запись» или откройте аудио/видеофайл.")
-        ttk.Label(self.root, textvariable=self.status_var, padding=(10, 0, 10, 8), foreground="#555").pack(fill="x")
+        ttk.Label(self.root, textvariable=self.status_var, padding=(10, 0, 10, 8)).pack(fill="x")
 
     def _read_toggles(self) -> None:
         self.settings = replace(

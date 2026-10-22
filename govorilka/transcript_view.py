@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import ttk
 
 from govorilka.config import SPEAKER_ME
@@ -26,6 +27,43 @@ OTHER_COLORS = ("#1a7f37", "#8250df", "#bc4c00", "#0a7c86", "#cf222e", "#6e5600"
 PARTIALS = "partials"
 
 
+@dataclass(frozen=True)
+class Palette:
+    background: str
+    text: str
+    time: str
+    partial: str
+    me: str
+    others: tuple[str, ...]
+    selection: str
+
+
+LIGHT = Palette("#fbfbfb", "#22252a", "#8b8b8b", "#9a9a9a", ME_COLOR, OTHER_COLORS, "#cfe3ff")
+DARK = Palette(
+    "#1e1f22",
+    "#e6e6e6",
+    "#8b949e",
+    "#8b949e",
+    "#58a6ff",
+    ("#3fb950", "#bc8cff", "#ffa657", "#39c5cf", "#ff7b72", "#d4a72c", "#f778ba", "#8b949e"),
+    "#2f5d99",
+)
+
+
+def is_dark(red: int, green: int, blue: int) -> bool:
+    """Тёмный ли цвет; компоненты 0..65535, как у winfo_rgb."""
+    return (0.299 * red + 0.587 * green + 0.114 * blue) / 65535 < 0.5
+
+
+def detect_palette(widget: tk.Misc) -> Palette:
+    """Тёмная палитра, если окно системы тёмное (на Mac и Windows 11 в тёмной теме)."""
+    try:
+        background = ttk.Style(widget).lookup("TFrame", "background") or widget.cget("background")
+        return DARK if is_dark(*widget.winfo_rgb(background)) else LIGHT
+    except tk.TclError:
+        return LIGHT
+
+
 def common_prefix(old: list[Utterance], new: list[Utterance]) -> int:
     """Сколько первых реплик совпадает (по объекту, а не по тексту)."""
     count = 0
@@ -40,13 +78,26 @@ class TranscriptView:
     def __init__(self, parent: tk.Misc) -> None:
         frame = ttk.Frame(parent, padding=(10, 0, 10, 0))
         frame.pack(fill="both", expand=True)
-        self.text = tk.Text(frame, wrap="word", font=(FONT, FONT_SIZE), padx=10, pady=8, relief="flat", bg="#fbfbfb")
+        self.palette = detect_palette(parent)
+        self.text = tk.Text(
+            frame,
+            wrap="word",
+            font=(FONT, FONT_SIZE),
+            padx=10,
+            pady=8,
+            relief="flat",
+            bg=self.palette.background,
+            fg=self.palette.text,  # без этого в тёмной теме macOS шрифт белый на светлом фоне
+            insertbackground=self.palette.text,
+            selectbackground=self.palette.selection,
+            selectforeground=self.palette.text,
+        )
         scroll = ttk.Scrollbar(frame, command=self.text.yview)
         self.text.configure(yscrollcommand=scroll.set, state="disabled")
         scroll.pack(side="right", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
-        self.text.tag_configure("time", foreground="#8b8b8b", font=(MONO, FONT_SIZE - 2))
-        self.text.tag_configure("partial", foreground="#9a9a9a", font=(FONT, FONT_SIZE, "italic"))
+        self.text.tag_configure("time", foreground=self.palette.time, font=(MONO, FONT_SIZE - 2))
+        self.text.tag_configure("partial", foreground=self.palette.partial, font=(FONT, FONT_SIZE, "italic"))
         self._speaker_tags: dict[str, str] = {}
         self._rendered: list[Utterance] = []
         self.text.mark_set(PARTIALS, "1.0")
@@ -54,10 +105,10 @@ class TranscriptView:
 
     def color_of(self, speaker: str) -> str:
         if speaker == SPEAKER_ME:
-            return ME_COLOR
+            return self.palette.me
         others = [s for s in self._speaker_tags if s != SPEAKER_ME]
         index = others.index(speaker) if speaker in others else len(others)
-        return OTHER_COLORS[index % len(OTHER_COLORS)]
+        return self.palette.others[index % len(self.palette.others)]
 
     def _tag(self, speaker: str) -> str:
         if speaker not in self._speaker_tags:

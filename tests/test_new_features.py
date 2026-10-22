@@ -8,7 +8,7 @@ from govorilka.models import format_progress
 from govorilka.segmenter import Segmenter, SegmenterParams
 from govorilka.speakers import Diarizer
 from govorilka.transcript import Utterance
-from govorilka.transcript_view import TranscriptView, common_prefix
+from govorilka.transcript_view import DARK, LIGHT, TranscriptView, common_prefix, detect_palette, is_dark
 
 SR = 16_000
 
@@ -105,3 +105,26 @@ def test_download_progress_text():
     mb = 1024 * 1024
     assert format_progress("модель", 425 * mb, 850 * mb) == "Скачиваю модель: 425 из 850 МБ (50%)"
     assert format_progress("модель", 12 * mb, None) == "Скачиваю модель: 12 МБ…"
+
+
+# ---------- тёмная тема ----------
+
+
+def test_is_dark_by_luminance():
+    assert is_dark(0x1e * 257, 0x1f * 257, 0x22 * 257)
+    assert not is_dark(65535, 65535, 65535)
+
+
+def test_palettes_have_readable_contrast():
+    def luminance(color: str) -> float:
+        r, g, b = (int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    for palette in (LIGHT, DARK):
+        for foreground in (palette.text, palette.me, *palette.others):
+            assert abs(luminance(foreground) - luminance(palette.background)) > 0.25, (palette.background, foreground)
+
+
+def test_view_sets_explicit_text_color(view):
+    assert view.text.cget("fg") in (view.palette.text, view.palette.text.upper())
+    assert detect_palette(view.text.master) in (LIGHT, DARK)
