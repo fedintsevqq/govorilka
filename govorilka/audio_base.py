@@ -35,6 +35,8 @@ class AudioError(RuntimeError):
 class Capture(Protocol):
     device: DeviceInfo
 
+    def is_alive(self) -> bool: ...
+
     def stop(self) -> None: ...
 
 

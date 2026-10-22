@@ -20,6 +20,7 @@ class Utterance:
     start: float  # секунды от начала записи
     text: str
     end: float = -1.0  # -1 — конец неизвестен, считаем равным началу
+    source: str = ""  # откуда звук: mic, system или file (см. config.SOURCE_*)
 
     def __post_init__(self) -> None:
         if self.end < self.start:

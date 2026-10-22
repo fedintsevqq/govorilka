@@ -44,6 +44,11 @@ DEFAULT_MODEL = "gigaam-v3-e2e-rnnt"
 
 SPEAKER_ME = "Я"
 SPEAKER_OTHERS = "Собеседник"
+SPEAKER_FILE = "Спикер"
+
+SOURCE_MIC = "mic"
+SOURCE_SYSTEM = "system"
+SOURCE_FILE = "file"
 
 DEFAULT_PROMPT = (
     "В этом файле транскрипт рабочего созвона: {file}. "
@@ -64,6 +69,7 @@ class Settings:
     capture_mic: bool = True
     capture_system: bool = True
     echo_filter: bool = True  # убирать из микрофона звук колонок
+    split_speakers: bool = True  # различать собеседников по голосу: «Собеседник 1», «Собеседник 2»
 
     @property
     def transcripts_path(self) -> Path:

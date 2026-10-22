@@ -1,7 +1,10 @@
-// Помощник Говорилки для macOS: пишет весь системный звук через ScreenCaptureKit.
-// stdout — сырой float32 моно 48 кГц, stderr — служебные строки: "ready", "error: ...".
+// Помощник Говорилки для macOS.
+//   --source system  весь системный звук через ScreenCaptureKit (по умолчанию)
+//   --source mic     микрофон по умолчанию через AVAudioEngine, со сменой устройства на лету
+// stdout — сырой float32 моно 48 кГц, stderr — служебные строки: "ready", "error: ...", прочее — в лог.
 // Завершается, когда закрывается stdin (родительский процесс остановил запись или упал).
 
+import AVFoundation
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -12,7 +15,7 @@ func report(_ line: String) {
     FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
 }
 
-final class AudioTap: NSObject, SCStreamOutput, SCStreamDelegate {
+final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private let output = FileHandle.standardOutput
     private let audioQueue = DispatchQueue(label: "govorilka.audiotap")
@@ -66,16 +69,104 @@ final class AudioTap: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 
-let tap = AudioTap()
+/// Микрофон: AVAudioEngine с переводом в моно 48 кГц.
+/// При смене устройства (AirPods, внешний микрофон) движок присылает уведомление — перезапускаемся.
+final class MicTap {
+    private let engine = AVAudioEngine()
+    private let output = FileHandle.standardOutput
+    private let outFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false
+    )!
+    private var converter: AVAudioConverter?
+    private var observer: NSObjectProtocol?
 
-Task {
-    do {
-        try await tap.start()
-        report("ready")
-    } catch {
-        report("error: \(error.localizedDescription)")
-        exit(1)
+    func start() throws {
+        let input = engine.inputNode
+        let inFormat = input.outputFormat(forBus: 0)
+        guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
+            throw NSError(domain: "audiotap", code: 2, userInfo: [NSLocalizedDescriptionKey: "микрофон не найден"])
+        }
+        guard let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
+            throw NSError(domain: "audiotap", code: 3, userInfo: [NSLocalizedDescriptionKey: "неподдерживаемый формат микрофона"])
+        }
+        converter.downmix = true
+        self.converter = converter
+        input.installTap(onBus: 0, bufferSize: 4800, format: inFormat) { [weak self] buffer, _ in
+            self?.write(buffer)
+        }
+        engine.prepare()
+        try engine.start()
+        if observer == nil {
+            observer = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            ) { [weak self] _ in self?.restart() }
+        }
     }
+
+    private func restart() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        do {
+            try start()
+            report("device changed")
+        } catch {
+            report("error: не переподключился к микрофону: \(error.localizedDescription)")
+            exit(3)
+        }
+    }
+
+    private func write(_ buffer: AVAudioPCMBuffer) {
+        guard let converter else { return }
+        let ratio = outFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
+        guard let converted = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
+        var consumed = false
+        var error: NSError?
+        converter.convert(to: converted, error: &error) { _, status in
+            if consumed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard error == nil, let channel = converted.floatChannelData?[0], converted.frameLength > 0 else { return }
+        output.write(Data(bytes: channel, count: Int(converted.frameLength) * MemoryLayout<Float>.size))
+    }
+}
+
+let arguments = CommandLine.arguments
+let source = arguments.firstIndex(of: "--source").flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil } ?? "system"
+
+// держим ссылки до конца процесса
+let systemTap = SystemTap()
+let micTap = MicTap()
+
+switch source {
+case "mic":
+    DispatchQueue.main.async {
+        do {
+            try micTap.start()
+            report("ready")
+        } catch {
+            report("error: \(error.localizedDescription)")
+            exit(1)
+        }
+    }
+case "system":
+    Task {
+        do {
+            try await systemTap.start()
+            report("ready")
+        } catch {
+            report("error: \(error.localizedDescription)")
+            exit(1)
+        }
+    }
+default:
+    report("error: неизвестный источник \(source)")
+    exit(64)
 }
 
 // читаем stdin до конца: EOF значит, что Говорилка закрыла запись

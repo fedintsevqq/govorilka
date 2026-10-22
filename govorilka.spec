@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Сборка Говорилки: на Windows — один .exe, на macOS — Govorilka.app (потом упаковывается в .dmg).
-# Модель GigaAM в сборку не входит: приложение скачает её при первой записи.
+# Модели (GigaAM, Silero, wespeaker) в сборку не входят: приложение скачает их при первом запуске.
 import os
 import sys
 
@@ -24,7 +24,14 @@ a = Analysis(
     pathex=["."],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["govorilka.audio_mac" if IS_MAC else "govorilka.audio_windows"],
+    # модули, которые грузятся лениво внутри функций, — PyInstaller сам их не видит
+    hiddenimports=[
+        "govorilka.audio_mac" if IS_MAC else "govorilka.audio_windows",
+        *([] if IS_MAC else ["govorilka.win_devices"]),
+        "govorilka.selftest",
+        "av",
+        "onnxruntime",
+    ],
     excludes=["torch", "matplotlib", "IPython", "pytest"],
     noarchive=False,
 )

@@ -41,6 +41,17 @@ class AudioSystem:
     def open_capture(self, device: DeviceInfo, out: queue.Queue[AudioChunk]) -> "Capture":
         return Capture(self._pa, device, out)
 
+    @staticmethod
+    def default_signature() -> tuple[str, str] | None:
+        """Меняется, когда в Windows выбрали другие наушники или микрофон."""
+        from govorilka.win_devices import default_device_ids
+
+        try:
+            return default_device_ids()
+        except OSError as exc:
+            log.warning("Не узнал устройства по умолчанию: %s", exc)
+            return None
+
 
 def _to_device(info: dict) -> DeviceInfo:
     return DeviceInfo(
@@ -81,6 +92,13 @@ class Capture:
         except Exception:  # колбэк PortAudio не должен падать
             log.exception("Ошибка обработки звука с %s", self.device.name)
         return (None, pyaudio.paContinue)
+
+    def is_alive(self) -> bool:
+        """False — устройство пропало (выдернули USB, отключились Bluetooth-наушники)."""
+        try:
+            return bool(self._stream.is_active())
+        except OSError:
+            return False
 
     def stop(self) -> None:
         try:

@@ -4,5 +4,6 @@ onnxruntime==1.31.0; sys_platform != "darwin" or platform_machine == "arm64"
 onnxruntime==1.23.2; sys_platform == "darwin" and platform_machine == "x86_64"
 numpy==2.5.4
 scipy==1.18.1
+av==19.0.2  # чтение аудио и видео (внутри ffmpeg)
 PyAudioWPatch==0.2.12.9; sys_platform == "win32"
-sounddevice==0.5.6; sys_platform == "darwin"
+comtypes==1.4.17; sys_platform == "win32"  # узнаём о смене наушников через Windows Core Audio

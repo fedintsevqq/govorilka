@@ -1,28 +1,23 @@
-"""Проверка собранного приложения без окна: `Govorilka --selftest файл.wav`.
+"""Проверка собранного приложения без окна: `Govorilka --selftest файл`.
 
-Грузит модель, распознаёт wav (16 кГц моно) и пишет результат в selftest.txt
+Расшифровывает файл тем же путём, что и кнопка «Открыть файл…»: PyAV,
+Silero VAD, GigaAM, различение голосов. Пишет результат в selftest.txt
 в папке данных. Код выхода 0 — всё работает.
 """
 
 from __future__ import annotations
 
 import logging
+import tempfile
 import traceback
-import wave
+from dataclasses import replace
 from pathlib import Path
 
-import numpy as np
-
-from govorilka.config import DATA_DIR, DEFAULT_MODEL
+from govorilka.config import DATA_DIR, DEFAULT_MODEL, Settings
+from govorilka.engines import load_engines
+from govorilka.filejob import FileJob
 
 log = logging.getLogger(__name__)
-
-
-def _read_wav(path: Path) -> np.ndarray:
-    with wave.open(str(path)) as w:
-        if w.getframerate() != 16_000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
-            raise ValueError("нужен wav 16 кГц, моно, 16 бит")
-        return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
 
 
 def _check_devices() -> str:
@@ -41,16 +36,29 @@ def _check_devices() -> str:
         audio.close()
 
 
-def run(wav: Path) -> int:
-    from govorilka.recognizer import Recognizer
-
+def run(media: Path) -> int:
     report = DATA_DIR / "selftest.txt"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        text = Recognizer(DEFAULT_MODEL).transcribe(_read_wav(wav))
-        devices = _check_devices()
-        report.write_text(f"OK\n{text}\n{devices}\n", encoding="utf-8")
-        return 0 if text else 1
+        engines = load_engines(DEFAULT_MODEL, lambda s: log.info("%s", s))
+        result: dict[str, object] = {}
+        with tempfile.TemporaryDirectory() as out:
+            settings = replace(Settings(), transcripts_dir=out)
+            job = FileJob(
+                media,
+                settings,
+                engines,
+                on_text=lambda _: None,
+                on_progress=lambda _: None,
+                on_done=lambda saved, error: result.update(saved=saved, error=error),
+            )
+            job.start()
+            job.wait()
+        if result.get("error"):
+            raise RuntimeError(str(result["error"]))
+        lines = [f"[{u.speaker}] {u.text}" for u in job.transcript.utterances]
+        report.write_text("OK\n" + "\n".join(lines) + "\n" + _check_devices() + "\n", encoding="utf-8")
+        return 0 if lines else 1
     except Exception:
         log.exception("Самопроверка не прошла")
         report.write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
