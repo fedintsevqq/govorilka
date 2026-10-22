@@ -1,0 +1,128 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  MODEL_CACHE_KEY: gigaam-v3-e2e-rnnt-v1
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      GOVORILKA_DATA_DIR: ${{ github.workspace }}\ci-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q tests
+      - name: Version
+        shell: bash
+        run: echo "GOVORILKA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Build exe
+        run: pyinstaller --noconfirm --clean govorilka.spec
+      - uses: actions/cache@v4
+        with:
+          path: ci-data/models
+          key: ${{ env.MODEL_CACHE_KEY }}
+      - name: Self-test exe (real model on test speech)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\Govorilka.exe -ArgumentList "--selftest", "tests\fixtures\speech_ru.wav" -Wait -PassThru
+          Get-Content ci-data\selftest.txt -Encoding utf8
+          exit $p.ExitCode
+      - name: Rename
+        shell: bash
+        run: mv dist/Govorilka.exe "dist/Govorilka-${GOVORILKA_VERSION:-dev}-windows-x64.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Govorilka-*-windows-x64.exe
+
+  macos:
+    runs-on: macos-14  # Apple Silicon
+    env:
+      GOVORILKA_DATA_DIR: ${{ github.workspace }}/ci-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Build system audio helper (Swift)
+        run: |
+          mkdir -p bin
+          swiftc -O -target arm64-apple-macos14.0 mac/audiotap.swift -o bin/govorilka-audiotap
+      - name: Smoke-test helper (must answer, not crash)
+        run: |
+          set +e
+          (sleep 8) | ./bin/govorilka-audiotap > /tmp/tap.raw 2> /tmp/tap.err
+          code=$?
+          cat /tmp/tap.err
+          echo "exit=$code bytes=$(wc -c < /tmp/tap.raw)"
+          grep -qE "^(ready|error:)" /tmp/tap.err && [ "$code" -lt 128 ]
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q tests
+      - name: Version
+        run: echo "GOVORILKA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Build app
+        run: |
+          pyinstaller --noconfirm --clean govorilka.spec
+          codesign --force --deep --sign - dist/Govorilka.app
+      - uses: actions/cache@v4
+        with:
+          path: ci-data/models
+          key: ${{ env.MODEL_CACHE_KEY }}
+      - name: Self-test app (real model on test speech)
+        run: |
+          set +e
+          dist/Govorilka.app/Contents/MacOS/Govorilka --selftest tests/fixtures/speech_ru.wav
+          code=$?
+          cat ci-data/selftest.txt
+          exit $code
+      - name: Build dmg
+        run: |
+          name="Govorilka-${GOVORILKA_VERSION:-dev}-macos-arm64.dmg"
+          mkdir dmg
+          cp -R dist/Govorilka.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Govorilka" -srcfolder dmg -ov -format UDZO "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/Govorilka-*-macos-arm64.dmg
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --title "Говорилка $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md

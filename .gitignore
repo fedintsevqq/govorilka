@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# сборка
+build/
+dist/
+bin/
+*.dmg
+
+# данные пользователя
+models/
+transcripts/
+settings.json
+selftest.txt
+govorilka.log
