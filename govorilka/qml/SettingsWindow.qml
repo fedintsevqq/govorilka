@@ -21,6 +21,7 @@ Window {
     property bool autostart: false
     property string hotkeyLabel: ""
     property string hotkeyWarning: ""
+    signal tourRequested()
 
     function open() {
         draft = JSON.parse(JSON.stringify(backend.settings))
@@ -295,6 +296,7 @@ Window {
         RowLayout {
             anchors { fill: parent; leftMargin: 24; rightMargin: 24 }
             spacing: 10
+            PillButton { text: "Как пользоваться"; iconName: "bolt"; onClicked: { win.close(); win.tourRequested() } }
             Item { Layout.fillWidth: true }
             PillButton { text: "Отмена"; onClicked: win.close() }
             PillButton {

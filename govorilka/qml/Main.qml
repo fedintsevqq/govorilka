@@ -375,8 +375,12 @@ ApplicationWindow {
     PermissionSheet { id: permissionSheet }
     RenameSheet { id: renameSheet }
 
-    SettingsWindow { id: settingsWindow }
-    RadialMenu { id: radial }
+    Onboarding { id: tour }
+    // знакомство — при первом запуске, когда окно уже нарисовалось
+    Timer { interval: 600; running: !window.opts.tour_done; onTriggered: if (!window.opts.tour_done && window.visible) tour.begin() }
+
+    SettingsWindow { id: settingsWindow; onTourRequested: { window.showWindow(); tour.begin() } }
+    RadialMenu { id: radial; practice: tour.practiceStep }
     RecordingPill { mainHidden: !window.visible || window.visibility === Window.Minimized || !window.active }
 
     Connections {

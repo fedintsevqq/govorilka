@@ -136,6 +136,7 @@ class Backend(QObject):
     hotkeyReleased = Signal()  # noqa: N815
     windowRequested = Signal()  # noqa: N815
     settingsRequested = Signal()  # noqa: N815
+    practiced = Signal(str)  # действие кругового меню, выбранное на тренировке в инструкции
     hiddenToTray = Signal()  # noqa: N815 — окно закрыли крестиком, приложение осталось в трее
     quitRequested = Signal()  # noqa: N815
 
@@ -154,6 +155,7 @@ class Backend(QObject):
         self._file_name = ""
         self._live_keys = ""
         self._capturing = False
+        self._tour_active = False
         self._recorder: ChordRecorder | None = None
         self._capture_deadline = 0.0
         self._keyboard: Keyboard | None = None
@@ -389,9 +391,26 @@ class Backend(QObject):
 
     knownVoices = Property(int, lambda self: len(self.controller.known_voices()), notify=settingsChanged)  # noqa: N815
 
+    @Slot(bool)
+    @safe_slot
+    def setTourActive(self, on: bool) -> None:  # noqa: N802
+        """Тренировка в инструкции: клавиша всегда открывает меню, а выбор в нём ничего не запускает."""
+        self._tour_active = on
+
+    @Slot()
+    @safe_slot
+    def finishTour(self) -> None:  # noqa: N802
+        self._tour_active = False
+        if not self.controller.settings.tour_done:
+            self.controller.update_settings(map_to_settings(self.controller.settings, {"tour_done": True}))
+            self.settingsChanged.emit()
+
     @Slot(str)
     @safe_slot
     def radialAction(self, name: str) -> None:  # noqa: N802
+        if self._tour_active:
+            self.practiced.emit(name)
+            return
         actions = {
             "record": lambda: self.controller.toggle_recording(),
             "pause": self.controller.toggle_pause,
@@ -531,7 +550,7 @@ class Backend(QObject):
         self.permissionRequested.emit(str(error), error.service, self.controller.can_reset_permission())
 
     def _on_hotkey(self) -> None:
-        if self.controller.settings.hotkey_action == "record":
+        if self.controller.settings.hotkey_action == "record" and not self._tour_active:
             self.controller.toggle_recording()
             return
         position = QCursor.pos()

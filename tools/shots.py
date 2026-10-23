@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
+
+# снимки не должны трогать настоящие настройки и память голосов
+os.environ.setdefault("GOVORILKA_DATA_DIR", tempfile.mkdtemp(prefix="govorilka-shots-"))
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -83,6 +88,23 @@ def main(out: Path) -> None:
         obj = root.findChild(QObject, name)
         QMetaObject.invokeMethod(obj, method, Qt.ConnectionType.DirectConnection)
 
+    def tour(step: int, **state: object) -> None:
+        popup = root.findChild(QObject, "tour")
+        popup.setProperty("step", step)
+        for key, value in state.items():
+            popup.setProperty(key, value)
+
+    # знакомство открывается само: в настройках оно ещё не пройдено
+    for step, state, name in [
+        (0, {}, "0-tour-1"),
+        (1, {}, "0-tour-2"),
+        (1, {"menuSeen": True, "chosen": "record"}, "0-tour-2-done"),
+        (2, {}, "0-tour-3"),
+        (3, {}, "0-tour-4"),
+    ]:
+        steps.append(lambda step=step, state=state: tour(step, **state))
+        steps.append(lambda name=name: shoot(backend, root, out / f"{name}.png"))
+    steps.append(lambda: invoke("tour", "close"))
     steps.append(lambda: shoot(backend, root, out / "1-idle.png"))
     steps.append(lambda: (populate(True), None)[1])
     steps.append(lambda: shoot(backend, root, out / "2-recording.png"))

@@ -23,6 +23,7 @@ Window {
     readonly property real ringRadius: 128
     readonly property real deadZone: 46      // в центре — «ничего не выбрано»
     property int hovered: -1
+    property bool practice: false             // тренировка в знакомстве: в центре подсказка, что делать
     property bool closing: false
     property real openedAt: 0
     property real reveal: 0                   // 0 → 1 при появлении
@@ -239,14 +240,23 @@ Window {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: menu.hovered >= 0 ? (menu.actions[menu.hovered].disabled ? menu.actions[menu.hovered].label + " — нет записи" : menu.actions[menu.hovered].label)
-                        : menu.live ? (menu.phase === "paused" ? "Пауза" : "Запись") : "Говорилка"
+                        : menu.practice ? "Тренировка" : menu.live ? (menu.phase === "paused" ? "Пауза" : "Запись") : "Говорилка"
                     font.pixelSize: menu.hovered >= 0 ? 13 : 12
                     font.weight: Font.DemiBold
                     color: menu.hovered >= 0 ? Theme.text : Theme.textSecondary
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: menu.live
+                    visible: menu.practice && menu.hovered < 0
+                    text: "ведите мышь
+к кружку"
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 11
+                    color: Theme.textTertiary
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: menu.live && !menu.practice
                     text: backend.elapsed
                     font.pixelSize: 15
                     font.weight: Font.DemiBold

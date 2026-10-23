@@ -1,5 +1,6 @@
 """Интерфейс на Qt без экрана: иконки, модель ленты, мост к контроллеру, загрузка окон QML, трей."""
 
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -165,7 +166,10 @@ def test_settings_from_qml_ignore_wrong_types_and_unknown_fields():
 
 
 def test_file_url_becomes_a_path():
-    assert to_path("file:///C:/Users/me/Мой файл.mp3") == Path("C:/Users/me/Мой файл.mp3")
+    if sys.platform == "win32":
+        assert to_path("file:///C:/Users/me/Мой файл.mp3") == Path("C:/Users/me/Мой файл.mp3")
+    else:
+        assert to_path("file:///Users/me/Мой файл.mp3") == Path("/Users/me/Мой файл.mp3")
     assert to_path("/tmp/a.wav") == Path("/tmp/a.wav")
 
 
@@ -243,6 +247,39 @@ def test_permission_error_reaches_qml_with_reset_flag(backend, qapp):
     backend.permissionRequested.connect(lambda text, service, can_reset: asked.append((text, service, can_reset)))
     backend._listener.on_permission(PermissionDeniedError("ScreenCapture", "Нет доступа"))
     assert pump(qapp, lambda: asked) and asked[0][:2] == ("Нет доступа", "ScreenCapture")
+
+
+def test_tour_practice_never_runs_the_chosen_action(backend, qapp):
+    calls, practiced = [], []
+    backend.controller.toggle_recording = lambda title="": calls.append("record")
+    backend.practiced.connect(practiced.append)
+    backend.setTourActive(True)
+    backend.radialAction("record")
+    assert calls == [] and practiced == ["record"]
+    backend.setTourActive(False)
+    backend.radialAction("record")
+    assert calls == ["record"]
+
+
+def test_tour_practice_opens_the_menu_even_when_the_hotkey_starts_recording(backend, qapp):
+    backend.controller.settings = Settings(hotkey_action="record")
+    calls, opened = [], []
+    backend.controller.toggle_recording = lambda title="": calls.append("record")
+    backend.radialRequested.connect(lambda x, y: opened.append((x, y)))
+    backend.setTourActive(True)
+    backend._on_hotkey()
+    assert opened and calls == []
+
+
+def test_finishing_the_tour_is_remembered(backend, qapp, monkeypatch):
+    from govorilka import controller as controller_module
+
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    assert backend.settings["tour_done"] is False
+    backend.setTourActive(True)
+    backend.finishTour()
+    assert backend.settings["tour_done"] is True
+    assert backend._tour_active is False
 
 
 def test_radial_actions_call_the_controller(backend, qapp):

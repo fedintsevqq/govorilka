@@ -109,6 +109,7 @@ class Settings:
     hotkey_action: str = "menu"  # menu — круговое меню у курсора, record — сразу старт/стоп записи
     reduce_motion: bool = False  # вместо движения — короткое растворение
     theme: str = "system"  # system / dark / light
+    tour_done: bool = False  # инструкцию при первом запуске уже прошли или пропустили
     remember_voices: bool = False  # запоминать голоса знакомых и узнавать их (биометрия: по желанию, локально)
     settings_version: int = SETTINGS_VERSION
 
