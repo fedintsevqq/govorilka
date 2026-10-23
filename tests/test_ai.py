@@ -224,3 +224,119 @@ def test_autopaste_waits_while_there_is_no_chat_input_on_the_page():
         clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s),
     )
     assert count == 1 and len(calls) == 3
+
+
+# ---------- настольные приложения ----------
+
+
+def fake_apps(monkeypatch, installed):
+    from govorilka import desktop_apps
+
+    opened, launched = [], []
+    monkeypatch.setattr(desktop_apps, "installed", lambda key: key in installed)
+    monkeypatch.setattr(desktop_apps, "open_link", opened.append)
+    monkeypatch.setattr(desktop_apps, "launch", launched.append)
+    return opened, launched
+
+
+def test_installed_claude_app_gets_a_short_conversation_right_in_the_input(tmp_path, monkeypatch):
+    opened, _ = fake_apps(monkeypatch, {"claude"})
+    c, _ = make_controller(tmp_path, "claude", "DE")
+    result = c.send_to_ai()
+    assert result.ok and not result.url and not result.target  # браузер не нужен, вставлять самим не надо
+    assert opened[0].startswith("claude://claude.ai/new?q=") and "%D0%9D%D0%B0%D1%87%D0%B8%D0%BD%D0%B0%D0%B5%D0%BC" in opened[0]
+
+
+def test_long_conversation_goes_to_the_claude_app_through_autopaste(tmp_path, monkeypatch):
+    opened, _ = fake_apps(monkeypatch, {"claude"})
+    c, _ = make_controller(tmp_path, "claude", "DE")
+    for i in range(60):
+        c.transcript.add(Utterance("Я", 10.0 + i, "Длинная фраза про релиз и тестирование.", 11.0 + i, "mic", "Я"))
+    result = c.send_to_ai()
+    assert opened == ["claude://claude.ai/new"] and result.target == "claude" and not result.url
+    assert "Длинная фраза" in result.clipboard
+
+
+def test_installed_chatgpt_app_is_launched_and_filled_by_autopaste(tmp_path, monkeypatch):
+    opened, launched = fake_apps(monkeypatch, {"chatgpt"})
+    c, _ = make_controller(tmp_path, "chatgpt", "DE")
+    result = c.send_to_ai()
+    assert launched == ["chatgpt"] and opened == [] and result.target == "chatgpt" and not result.url
+
+
+def test_browser_is_used_when_the_app_is_missing_or_the_person_prefers_it(tmp_path, monkeypatch):
+    opened, launched = fake_apps(monkeypatch, set())
+    c, _ = make_controller(tmp_path, "chatgpt", "DE")
+    assert c.send_to_ai().url == "https://chatgpt.com/" and not launched
+    opened, launched = fake_apps(monkeypatch, {"chatgpt", "claude"})
+    c, _ = make_controller(tmp_path, "chatgpt", "DE")
+    c.settings = replace_settings(c.settings, ai_open_in="browser")
+    assert c.send_to_ai().url == "https://chatgpt.com/" and not launched and not opened
+
+
+def replace_settings(settings, **changes):
+    from dataclasses import replace
+
+    return replace(settings, **changes)
+
+
+def test_claude_code_opens_in_the_claude_app_with_the_transcripts_folder(tmp_path, monkeypatch):
+    opened, _ = fake_apps(monkeypatch, {"claude"})
+    c, _ = make_controller(tmp_path, "claude_code", "DE")
+    c.last_file = tmp_path / "call.md"
+    c.last_file.write_text("# Созвон", encoding="utf-8")
+    result = c.send_to_ai()
+    assert result.ok and opened[0].startswith("claude://code/new?q=") and "&folder=" in opened[0]
+
+
+def test_app_that_fails_to_open_falls_back_to_the_browser(tmp_path, monkeypatch):
+    from govorilka import desktop_apps
+
+    fake_apps(monkeypatch, {"chatgpt"})
+    monkeypatch.setattr(desktop_apps, "launch", lambda key: (_ for _ in ()).throw(OSError("нет")))
+    c, _ = make_controller(tmp_path, "chatgpt", "DE")
+    assert c.send_to_ai().url == "https://chatgpt.com/"
+
+
+def test_foreign_app_is_not_opened_from_a_blocked_country_either(tmp_path, monkeypatch):
+    opened, launched = fake_apps(monkeypatch, {"claude", "chatgpt"})
+    for target in ("claude", "chatgpt", "claude_code"):
+        c, _ = make_controller(tmp_path, target, "RU")
+        assert not c.send_to_ai().ok
+    assert opened == [] and launched == []
+
+
+def test_windows_search_checks_every_drive_not_only_c(monkeypatch):
+    from govorilka import desktop_apps as d
+
+    monkeypatch.setattr(d.os.path, "exists", lambda p: p == "F:\Program Files\ChatGPT\ChatGPT.exe")
+    assert d._windows_exe_on_any_drive(d.APPS["chatgpt"]) == "F:\Program Files\ChatGPT\ChatGPT.exe"
+    monkeypatch.setattr(d.os.path, "exists", lambda p: False)
+    assert d._windows_exe_on_any_drive(d.APPS["chatgpt"]) is None
+
+
+def test_mac_search_finds_an_app_on_an_external_disk_through_spotlight(monkeypatch):
+    from types import SimpleNamespace
+
+    from govorilka import desktop_apps as d
+
+    app = "/Volumes/Работа/Apps/ChatGPT.app"
+    monkeypatch.setattr(d.Path, "exists", lambda self: str(self).replace("\\", "/") == app)
+    monkeypatch.setattr(d.subprocess, "run", lambda cmd, **k: SimpleNamespace(stdout=app + "\n", returncode=0))
+    assert d._mac_path(d.APPS["chatgpt"]).replace("\\", "/") == app
+
+
+def test_missing_app_is_rechecked_after_a_few_minutes_found_one_is_remembered(monkeypatch):
+    from govorilka import desktop_apps as d
+
+    d.forget()
+    clock, calls = [1000.0], []
+    monkeypatch.setattr(d.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(d.sys, "platform", "darwin")
+    answers = iter([None, "/Applications/Claude.app", "/Applications/Claude.app"])
+    monkeypatch.setattr(d, "_mac_path", lambda app: calls.append(1) or next(answers))
+    assert d.find("claude") is None and d.find("claude") is None and len(calls) == 1  # «нет» помним, не ищем заново
+    clock[0] += d.MISSING_TTL_S + 1  # человек успел установить приложение
+    assert d.find("claude") == "/Applications/Claude.app" and len(calls) == 2
+    assert d.find("claude") == "/Applications/Claude.app" and len(calls) == 2
+    d.forget()

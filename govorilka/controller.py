@@ -20,7 +20,9 @@ from pathlib import Path
 from govorilka import autostart, permissions, single_instance
 from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
-from govorilka import ai
+from urllib.parse import quote
+
+from govorilka import ai, desktop_apps
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
@@ -468,6 +470,9 @@ class Controller:
                     + ai.availability_hint(country),
                     clipboard=text,
                 )
+        desktop = self._send_to_desktop_app(target, text, paste)
+        if desktop is not None:
+            return desktop
         if target == ai.CLAUDE_CODE:
             return self.send_to_claude()
         if not info.url:
@@ -476,6 +481,53 @@ class Controller:
         message = (f"Открываю {info.name}: разговор вставится в поле ввода сам — и после входа в аккаунт тоже. "
                    f"Проверьте и нажмите Enter. Не вставился — нажмите {paste}")
         return ClaudeResult(True, message, clipboard=text, url=info.url, target=target)
+
+    def _use_desktop(self, key: str) -> bool:
+        return self.settings.ai_open_in != "browser" and desktop_apps.installed(key)
+
+    def _send_to_desktop_app(self, target: str, text: str, paste: str) -> ClaudeResult | None:
+        """Если у человека установлено приложение ChatGPT или Claude, открываем разговор в нём, а не в браузере.
+        None — приложения нет (или выбран браузер): дальше сработает обычный путь."""
+        try:
+            if target == ai.CLAUDE_CODE and self._use_desktop("claude"):
+                return self._claude_code_in_desktop()
+            if target == "claude" and self._use_desktop("claude"):
+                link = "claude://claude.ai/new?q=" + quote(text, safe="")
+                if len(link) <= desktop_apps.MAX_LINK:  # короткий разговор — сразу в поле ввода
+                    desktop_apps.open_link(link)
+                    return ClaudeResult(True, "Открыл приложение Claude: разговор уже в поле ввода — проверьте и нажмите Enter", clipboard=text)
+                desktop_apps.open_link("claude://claude.ai/new")
+                return ClaudeResult(True, self._autopaste_message("Claude", paste), clipboard=text, target="claude")
+            if target == "chatgpt" and self._use_desktop("chatgpt"):
+                desktop_apps.launch("chatgpt")
+                return ClaudeResult(True, self._autopaste_message("ChatGPT", paste), clipboard=text, target="chatgpt")
+        except OSError as exc:
+            log.warning("Не открыл приложение нейросети (%s), открываю обычным путём: %s", target, exc)
+            desktop_apps.forget()
+        return None
+
+    @staticmethod
+    def _autopaste_message(name: str, paste: str) -> str:
+        return (f"Открываю приложение {name}: разговор вставится в поле ввода сам — и после входа в аккаунт тоже. "
+                f"Проверьте и нажмите Enter. Не вставился — нажмите {paste}")
+
+    def _claude_code_in_desktop(self) -> ClaudeResult:
+        """Claude Code во вкладке «Code» приложения Claude: вместо окна терминала."""
+        if not self.save_now():
+            return ClaudeResult(False, "Не получилось сохранить свежий транскрипт, Claude увидел бы старую версию. "
+                                       "Освободите место на диске или смените папку в настройках.")
+        if not self.last_file or not self.last_file.exists():
+            return ClaudeResult(False, "Сначала запишите созвон или расшифруйте файл — отправлять пока нечего.")
+        prompt = build_prompt(self.last_file, self.settings.claude_prompt)
+        folder = self.settings.claude_path
+        folder.mkdir(parents=True, exist_ok=True)
+        link = f"claude://code/new?q={quote(prompt, safe='')}&folder={quote(str(folder), safe='')}"
+        desktop_apps.open_link(link)
+        return ClaudeResult(
+            True,
+            "Открыл Claude Code в приложении Claude. Подтвердите папку, если приложение спросит, и нажмите Enter",
+            clipboard=prompt,
+        )
 
     def send_to_claude(self) -> ClaudeResult:
         if not self.save_now():

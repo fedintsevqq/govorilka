@@ -22,6 +22,7 @@ Window {
     property bool autostart: false
     property string hotkeyLabel: ""
     property string hotkeyWarning: ""
+    readonly property bool hasDesktopApp: ["chatgpt", "claude", "claude_code"].indexOf(draft.ai_target) >= 0
     readonly property bool claudeCode: draft.ai_target === "claude_code"   // папка нужна только Claude Code
     signal tourRequested()
 
@@ -36,6 +37,7 @@ Window {
         claudeField.text = draft.claude_workdir
         modelBox.currentIndex = Math.max(0, modelBox.find(draft.model))
         aiBox.currentIndex = Math.max(0, aiBox.find(draft.ai_target))
+        openBox.currentIndex = draft.ai_open_in === "browser" ? 1 : 0
         themeBox.currentIndex = ["system", "dark", "light"].indexOf(draft.theme)
         actionBox.currentIndex = draft.hotkey_action === "record" ? 1 : 0
         show()
@@ -275,10 +277,18 @@ Window {
                     onActivated: win.setValue("ai_target", backend.aiChoices[currentIndex].id)
                     function find(id) { for (let i = 0; i < backend.aiChoices.length; ++i) if (backend.aiChoices[i].id === id) return i; return 0 }
                 }
+                Label { visible: win.hasDesktopApp; text: "Где открывать ChatGPT, Claude и Claude Code" }
+                ComboField {
+                    id: openBox
+                    visible: win.hasDesktopApp
+                    model: backend.aiOpenChoices
+                    textRole: "label"
+                    onActivated: win.setValue("ai_open_in", backend.aiOpenChoices[currentIndex].id)
+                }
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: "ChatGPT и Claude открываются сразу с разговором в поле ввода (очень длинный разговор не влезает в ссылку — тогда он в буфере, нажмите Ctrl+V). Остальные чаты откроются, а разговор будет в буфере обмена. Claude Code читает файл сам."
+                    text: "Говорилка открывает чат и сама вставляет в него разговор, даже если вы ещё не вошли в аккаунт: вставка случится после входа. Проверьте текст и нажмите Enter. Claude Code читает файл сам."
                     font.pixelSize: 12
                     lineHeight: 1.2
                     color: Theme.textTertiary

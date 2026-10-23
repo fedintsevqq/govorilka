@@ -283,6 +283,14 @@ class Backend(QObject):
         return {"name": target.name, "short": target.short, "web": bool(target.url), "id": self.controller.ai_target()}
 
     aiTarget = Property("QVariantMap", _get_ai, notify=settingsChanged)  # noqa: N815 — куда уйдёт разговор
+    aiOpenChoices = Property(  # noqa: N815
+        "QVariantList",
+        lambda self: [
+            {"id": "auto", "label": "В приложении, если оно установлено, иначе в браузере"},
+            {"id": "browser", "label": "Всегда в браузере"},
+        ],
+        constant=True,
+    )
     aiChoices = Property(  # noqa: N815
         "QVariantList",
         lambda self: [
@@ -373,6 +381,7 @@ class Backend(QObject):
         if result.url:
             allow_foreground_handoff()  # браузер должен выйти вперёд, иначе вставлять будет некуда
             QDesktopServices.openUrl(QUrl(result.url))
+        if result.target:
             autopaste.start(result.target, on_no_permission=lambda: self.toast.emit(
                 "macOS не дал вставить текст: включите Говорилку в Настройки → Конфиденциальность и безопасность → "
                 "Универсальный доступ. Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
