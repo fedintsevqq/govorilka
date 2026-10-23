@@ -1,9 +1,18 @@
+import pytest
 import json
 from datetime import datetime
 
 from govorilka import ai
 from govorilka.config import DEFAULT_PROMPT, OLD_DEFAULT_PROMPT, load_settings
 from govorilka.transcript import Transcript, Utterance
+
+
+@pytest.fixture(autouse=True)
+def same_poll_everywhere(monkeypatch):
+    """На Mac опрос окна реже (раз в секунду): тесты автовставки считают время в шагах Windows."""
+    from govorilka.qt import autopaste
+
+    monkeypatch.setattr(autopaste, "POLL_S", 0.4)
 
 
 def test_default_is_copy_and_unknown_choices_fall_back_to_it():
