@@ -149,7 +149,7 @@ ApplicationWindow {
 
                 RecordButton {
                     id: recordButton
-                    diameter: 100
+                    diameter: window.height < 780 ? 80 : 100   // на невысоком окне пульт целиком, без обрезанного низа
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 4
                     phase: window.phase
@@ -242,23 +242,88 @@ ApplicationWindow {
                     ToolTip.delay: 300
                 }
 
-                PillButton {   // обычная кнопка, а не «премиум»: нейросеть — ваш выбор в настройках
+                PillButton {   // обычная кнопка, а не «премиум»: нейросеть выбирается лентой ниже или в настройках
                     Layout.fillWidth: true
                     text: backend.aiTarget.id === "clipboard" ? "Скопировать для нейросети" : "Отправить в " + backend.aiTarget.name
                     iconName: "sparkle"
                     tip: backend.aiTarget.id === "claude_code"
-                         ? "Открыть Claude Code с этим транскриптом и вашим запросом: итоги, задачи, письмо. Нейросеть меняется в настройках"
+                         ? "Открыть Claude Code с этим транскриптом и вашим запросом: итоги, задачи, письмо. Другую нейросеть выберите ниже"
                          : backend.aiTarget.web
-                           ? "Скопировать разговор с вашим запросом и открыть " + backend.aiTarget.name + " — останется вставить. Нейросеть меняется в настройках"
+                           ? "Скопировать разговор с вашим запросом и открыть " + backend.aiTarget.name + " — короткий разговор сразу окажется в поле ввода. Другую нейросеть выберите ниже"
                            : "Скопировать разговор с вашим запросом, чтобы вставить в любую нейросеть"
                     onClicked: backend.sendToAi()
+                }
+
+                // лента нейросетей: выбор в одно касание, не заходя в настройки
+                ListView {
+                    id: aiStrip
+                    Layout.fillWidth: true
+                    Layout.topMargin: 8
+                    Layout.preferredHeight: 28
+                    orientation: ListView.Horizontal
+                    spacing: 6
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: backend.aiChoices
+                    Accessible.name: "Нейросеть"
+                    Component.onCompleted: positionViewAtIndex(Math.max(0, backend.aiChoices.findIndex(c => c.id === backend.aiTarget.id)), ListView.Contain)
+                    delegate: AbstractButton {
+                        id: chip
+                        required property var modelData
+                        readonly property bool chosen: backend.aiTarget.id === modelData.id
+                        height: 28
+                        width: chipText.implicitWidth + 22
+                        hoverEnabled: true
+                        focusPolicy: Qt.TabFocus
+                        Accessible.name: modelData.label
+                        Accessible.checkable: true
+                        Accessible.checked: chosen
+                        onClicked: backend.setOption("ai_target", modelData.id)
+                        background: Rectangle {
+                            radius: 14
+                            color: chip.chosen ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.18 : 0.12)
+                                               : (chip.hovered ? Theme.hover : "transparent")
+                            border.color: chip.chosen ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55)
+                                        : (chip.visualFocus ? Theme.accent : Theme.shellLine)
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                        }
+                        contentItem: Text {
+                            id: chipText
+                            text: chip.modelData.short
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            font.pixelSize: 12
+                            font.weight: chip.chosen ? Font.DemiBold : Font.Normal
+                            color: chip.chosen ? Theme.text : Theme.textSecondary
+                        }
+                        Tip {
+                            shown: chip.hovered || chip.visualFocus
+                            text: chip.modelData.label + (chip.modelData.vpn ? ". Из России — только с VPN: без него Говорилка ничего не откроет" : "")
+                        }
+                    }
+                    // мягкие края: видно, что лента прокручивается
+                    Rectangle {
+                        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+                        width: 18; visible: !aiStrip.atXBeginning
+                        gradient: Gradient { orientation: Gradient.Horizontal
+                            GradientStop { position: 0; color: Theme.core }
+                            GradientStop { position: 1; color: Qt.rgba(Theme.core.r, Theme.core.g, Theme.core.b, 0) } }
+                    }
+                    Rectangle {
+                        anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                        width: 18; visible: !aiStrip.atXEnd
+                        gradient: Gradient { orientation: Gradient.Horizontal
+                            GradientStop { position: 0; color: Qt.rgba(Theme.core.r, Theme.core.g, Theme.core.b, 0) }
+                            GradientStop { position: 1; color: Theme.core } }
+                    }
                 }
 
                 RowLayout {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 10
                     spacing: 5
-                    visible: window.opts.hotkey_enabled
+                    // на невысоком окне места нет: подсказку про клавиши даёт знакомство и пустая лента
+                    visible: window.opts.hotkey_enabled && window.height >= 760
                     HoverHandler { id: keysHover }
                     Tip {
                         shown: keysHover.hovered

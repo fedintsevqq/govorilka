@@ -21,7 +21,7 @@ from govorilka import autostart, permissions, single_instance
 from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
 from govorilka import ai
-from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, find_claude, open_in_claude
+from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
 from govorilka.filejob import CANCELLED, FileJob
@@ -95,7 +95,7 @@ class Controller:
         self._stopping: threading.Thread | None = None
         self._voice_book: VoiceBook | None = None
         self._closing = False  # идёт выход: новые записи не начинаем
-        self._claude_found: bool | None = None  # ищем Claude Code один раз: это обход диска
+        self._probe_country = ai.probe_country  # подменяется в тестах: настоящая проверка ходит в сеть
         self.hotkeys = hotkeys or HotkeyWatcher(
             on_trigger=listener.on_hotkey,
             on_error=listener.on_status,
@@ -444,27 +444,36 @@ class Controller:
 
     def ai_target(self) -> str:
         """Куда сейчас уйдёт разговор (выбор «сама» уже превращён в конкретную нейросеть)."""
-        return ai.resolve(self.settings.ai_target, self._claude_installed())
-
-    def _claude_installed(self) -> bool:
-        if self._claude_found is None:
-            self._claude_found = find_claude() is not None
-        return self._claude_found
+        return ai.resolve(self.settings.ai_target)
 
     def send_to_ai(self) -> ClaudeResult:
         """Отдаёт разговор выбранной нейросети. Claude Code читает файл сам, веб-чатам — текст через буфер обмена."""
         target = self.ai_target()
-        if target == ai.CLAUDE_CODE:
-            return self.send_to_claude()
         if not self.transcript or not self.transcript.utterances:
             return ClaudeResult(False, "Сначала запишите созвон или расшифруйте файл — отправлять пока нечего.")
         text = ai.chat_text(self.settings.claude_prompt, self.transcript.to_markdown())
         paste = "⌘V" if sys.platform == "darwin" else "Ctrl+V"
         info = ai.TARGETS[target]
+        if info.probe:  # зарубежный сервис: сначала убеждаемся, что он доступен и не забанит за страну
+            country = self._probe_country(info.probe)
+            problem = ai.availability_problem(info, country)
+            if problem:
+                return ClaudeResult(
+                    False,
+                    f"{problem}. Ничего не открыл и не отправил, разговор скопирован. "
+                    + ai.availability_hint(country),
+                    clipboard=text,
+                )
+        if target == ai.CLAUDE_CODE:
+            return self.send_to_claude()
         if not info.url:
-            return ClaudeResult(True, "Разговор и запрос скопированы — вставьте в любую нейросеть", clipboard=text)
+            return ClaudeResult(True, f"Разговор и запрос скопированы — вставьте в любую нейросеть ({paste})", clipboard=text)
+        url, inside = ai.chat_url(info, text)
+        if inside:  # разговор уже в поле ввода; в буфере — на случай, если чат попросит войти и потеряет текст
+            return ClaudeResult(True, f"Открыл {info.name} с разговором. Текст есть и в буфере обмена", clipboard=text, url=url)
+        hint = " — разговор длинный для ссылки" if info.query else ""
         return ClaudeResult(
-            True, f"Разговор скопирован. В {info.name} нажмите {paste} и Enter", clipboard=text, url=info.url
+            True, f"Разговор скопирован{hint}. В {info.name} нажмите {paste} и Enter", clipboard=text, url=url
         )
 
     def send_to_claude(self) -> ClaudeResult:

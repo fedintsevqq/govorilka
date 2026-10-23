@@ -22,7 +22,7 @@ Window {
     property bool autostart: false
     property string hotkeyLabel: ""
     property string hotkeyWarning: ""
-    readonly property bool claudeCode: draft.ai_target === "claude_code" || draft.ai_target === "auto"   // папка нужна только Claude Code
+    readonly property bool claudeCode: draft.ai_target === "claude_code"   // папка нужна только Claude Code
     signal tourRequested()
 
     function open() {
@@ -278,7 +278,7 @@ Window {
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: "В браузерный чат Говорилка копирует разговор и открывает сайт — останется вставить и нажать Enter. Claude Code читает файл сам."
+                    text: "ChatGPT и Claude открываются сразу с разговором в поле ввода (очень длинный разговор не влезает в ссылку — тогда он в буфере, нажмите Ctrl+V). Остальные чаты откроются, а разговор будет в буфере обмена. Claude Code читает файл сам."
                     font.pixelSize: 12
                     lineHeight: 1.2
                     color: Theme.textTertiary

@@ -396,7 +396,7 @@ Popup {
     // 4. После созвона
     component Page3: Page {
         title: "После созвона"
-        body: "Нажмите на имя «Собеседник 1», чтобы подписать человека, — имя встанет во все его реплики. Важный момент можно отметить звёздочкой. Кнопка «Отправить в " + backend.aiTarget.name + "» отдаёт весь разговор нейросети: ChatGPT, Claude или другой — выберите в настройках. Файлы лежат в папке <b>" + String(tour.opts.transcripts_dir).split(/[\\/]/).slice(-2).join("/") + "</b>."
+        body: "Нажмите на имя «Собеседник 1», чтобы подписать человека, — имя встанет во все его реплики. Важный момент можно отметить звёздочкой. Кнопка «" + (backend.aiTarget.id === "clipboard" ? "Скопировать для нейросети" : "Отправить в " + backend.aiTarget.name) + "» отдаёт весь разговор с готовым запросом нейросети. <b>Какую — выберите в настройках:</b> ChatGPT, Claude, Gemini, DeepSeek, GigaChat, Алиса или Claude Code. Файлы лежат в папке <b>" + String(tour.opts.transcripts_dir).split(/[\\/]/).slice(-2).join("/") + "</b>."
         Column {
             anchors.centerIn: parent
             spacing: 12
@@ -438,7 +438,7 @@ Popup {
                 Repeater {
                     model: [
                         { icon: "star", text: "Отметка", tint: Theme.mark },
-                        { icon: "sparkle", text: "В " + backend.aiTarget.name, tint: Theme.accentA },
+                        { icon: "sparkle", text: "Любая нейросеть", tint: Theme.accentA },
                         { icon: "folder", text: "Папка", tint: Theme.accentB }
                     ]
                     Rectangle {

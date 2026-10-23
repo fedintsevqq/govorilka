@@ -104,7 +104,7 @@ class Settings:
     transcripts_dir: str = str(DEFAULT_TRANSCRIPTS_DIR)
     claude_workdir: str = ""  # пусто — запускать Claude Code в папке транскриптов
     claude_prompt: str = DEFAULT_PROMPT  # что попросить у нейросети ({file} — транскрипт)
-    ai_target: str = "auto"  # куда отправлять разговор: см. govorilka/ai.py
+    ai_target: str = "clipboard"  # куда отправлять разговор: см. govorilka/ai.py
     capture_mic: bool = True
     capture_system: bool = True
     echo_filter: bool = True  # убирать из микрофона звук колонок

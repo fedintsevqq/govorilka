@@ -10,6 +10,7 @@ import functools
 import logging
 import math
 import sys
+import threading
 import time
 from dataclasses import asdict, fields, replace
 from pathlib import Path
@@ -19,7 +20,7 @@ from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QWindow
 
 from govorilka.audio_base import PermissionDeniedError
 from govorilka.config import MODELS, SOURCE_MIC, SOURCE_SYSTEM, Settings
-from govorilka.controller import AppState, Controller, Listener
+from govorilka.controller import AppState, ClaudeResult, Controller, Listener
 from govorilka.hotkeys import (
     ChordRecorder,
     Keyboard,
@@ -126,6 +127,7 @@ class Backend(QObject):
     _hotkey_in = Signal()
     _release_in = Signal()
     _finished_in = Signal(object, str)
+    _ai_in = Signal(object)
 
     # ---------- для QML ----------
     stateChanged = Signal()  # noqa: N815
@@ -163,6 +165,7 @@ class Backend(QObject):
         self._live_keys = ""
         self._capturing = False
         self._tour_active = False
+        self._ai_busy = False
         self._key_watchers: set[str] = set()
         self._recorder: ChordRecorder | None = None
         self._capture_deadline = 0.0
@@ -182,6 +185,7 @@ class Backend(QObject):
             (self._hotkey_in, self._on_hotkey),
             (self._release_in, self.hotkeyReleased),
             (self._finished_in, self._on_finished),
+            (self._ai_in, self._on_ai_result),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -279,7 +283,12 @@ class Backend(QObject):
 
     aiTarget = Property("QVariantMap", _get_ai, notify=settingsChanged)  # noqa: N815 — куда уйдёт разговор
     aiChoices = Property(  # noqa: N815
-        "QVariantList", lambda self: [{"id": key, "label": label} for key, label in ai.CHOICES], constant=True
+        "QVariantList",
+        lambda self: [
+            {"id": key, "label": label, "short": ai.TARGETS[key].short, "vpn": bool(ai.TARGETS[key].probe)}
+            for key, label in ai.CHOICES
+        ],
+        constant=True,
     )
 
     autostart = Property(bool, lambda self: self.controller.autostart_enabled(), notify=settingsChanged)
@@ -339,7 +348,25 @@ class Backend(QObject):
     @Slot()
     @safe_slot
     def sendToAi(self) -> None:  # noqa: N802
-        result = self.controller.send_to_ai()
+        """Проверка доступности зарубежного чата ходит в сеть (до 4 с): делаем её в фоне, окно не замирает."""
+        if self._ai_busy:
+            return
+        self._ai_busy = True
+        if ai.TARGETS[self.controller.ai_target()].probe:
+            self.toast.emit(f"Проверяю, доступен ли {self.aiTarget['name']}…", "info")
+
+        def work() -> None:
+            try:
+                result = self.controller.send_to_ai()
+            except Exception as exc:  # noqa: BLE001 — сбой не должен оставить кнопку «занятой» навсегда
+                log.exception("Не отправил разговор нейросети")
+                result = ClaudeResult(False, f"Не получилось отправить: {exc}")
+            self._ai_in.emit(result)
+
+        threading.Thread(target=work, name="send-to-ai", daemon=True).start()
+
+    def _on_ai_result(self, result: ClaudeResult) -> None:
+        self._ai_busy = False
         if result.clipboard:
             QGuiApplication.clipboard().setText(result.clipboard)
         if result.url:

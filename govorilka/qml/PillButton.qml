@@ -49,8 +49,9 @@ AbstractButton {
         Row {
             id: row
             anchors.verticalCenter: parent.verticalCenter
-            anchors.left: parent.left
-            anchors.leftMargin: control.leftPad
+            // у главной кнопки текст слева, а кружок со значком справа; у обычной — всё по центру,
+            // даже если раскладка растянула кнопку шире подписи
+            x: control.trailing ? control.leftPad : Math.max(control.leftPad, (parent.width - width) / 2)
             spacing: control.trailing ? 10 : 8
             Icon {
                 visible: control.iconName !== "" && !control.trailing
