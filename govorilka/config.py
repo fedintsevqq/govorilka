@@ -58,6 +58,9 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 DEFAULT_TRANSCRIPTS_DIR = downloads_dir() / "Govorilka"
 OLD_DEFAULT_TRANSCRIPTS_DIRS = (Path.home() / "Documents" / "Govorilka", APP_DIR / "transcripts")  # до версии 0.2
 SETTINGS_VERSION = 2
+PACKAGE_DIR = RESOURCE_DIR / "govorilka" if FROZEN else Path(__file__).resolve().parent
+QML_DIR = PACKAGE_DIR / "qml"  # окна интерфейса
+ASSETS_DIR = PACKAGE_DIR / "assets"  # иконки
 AUDIOTAP_PATH = RESOURCE_DIR / "bin" / "govorilka-audiotap"  # помощник системного звука для macOS
 
 # Модель распознавания работает на 16 кГц моно
@@ -77,6 +80,8 @@ SPEAKER_FILE = "Спикер"
 SOURCE_MIC = "mic"
 SOURCE_SYSTEM = "system"
 SOURCE_FILE = "file"
+SOURCE_MARK = "mark"  # то же, что transcript.SOURCE_MARK
+SOURCE_NOTE = "note"  # то же, что transcript.SOURCE_NOTE
 
 DEFAULT_PROMPT = (
     "В этом файле транскрипт рабочего созвона: {file}. "
@@ -101,6 +106,10 @@ class Settings:
     hotkey_enabled: bool = True  # старт и стоп записи по комбинации клавиш, когда окно свёрнуто
     hotkey: str = DEFAULT_HOTKEY  # «ctrl+shift», «alt+cmd», «ctrl+alt+r»
     show_indicator: bool = True  # маленькая плашка «● Запись» поверх окон
+    hotkey_action: str = "menu"  # menu — круговое меню у курсора, record — сразу старт/стоп записи
+    reduce_motion: bool = False  # вместо движения — короткое растворение
+    theme: str = "system"  # system / dark / light
+    remember_voices: bool = False  # запоминать голоса знакомых и узнавать их (биометрия: по желанию, локально)
     settings_version: int = SETTINGS_VERSION
 
     @property

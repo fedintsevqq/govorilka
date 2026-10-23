@@ -1,0 +1,486 @@
+"""Интерфейс на Qt без экрана: иконки, модель ленты, мост к контроллеру, загрузка окон QML, трей."""
+
+import threading
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from conftest import pump  # noqa: E402
+from PySide6.QtCore import QObject  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
+
+from govorilka.config import Settings  # noqa: E402
+from govorilka.controller import AppState, Controller  # noqa: E402
+from govorilka.pipeline import TextEvent  # noqa: E402
+from govorilka.qt.backend import Backend, map_to_settings, sector_for, settings_to_map, to_path  # noqa: E402
+from govorilka.qt.icons import ICONS, IconProvider, render, svg  # noqa: E402
+from govorilka.qt.models import ME, SpeakerColors, TranscriptModel, build_rows  # noqa: E402
+from govorilka.transcript import SOURCE_MARK, SOURCE_NOTE, Transcript, Utterance  # noqa: E402
+
+
+class NoHotkeys:
+    def __init__(self):
+        self.paused = False
+
+    def set_chord(self, chord): ...
+    def start(self): ...
+    def stop(self): ...
+    def pause(self): ...
+    def resume(self): ...
+
+
+@pytest.fixture
+def backend(qapp, tmp_path):
+    settings = Settings(transcripts_dir=str(tmp_path))
+    return Backend(lambda listener: Controller(listener, settings, hotkeys=NoHotkeys()))
+
+
+def speech(who, start, text, source="system"):
+    return Utterance(who, start, text, start + 2, source)
+
+
+# ---------- иконки ----------
+
+
+def test_every_icon_renders_with_the_requested_color(qapp):
+    for name in ICONS:
+        image = render(name, QColor("#ff0000"), 48)
+        visible = [image.pixelColor(x, y) for x in range(0, 48, 2) for y in range(0, 48, 2) if image.pixelColor(x, y).alpha() > 200]
+        assert visible, name
+        assert all(c.red() > 200 and c.green() < 60 and c.blue() < 60 for c in visible), name
+
+
+def test_icon_provider_accepts_color_with_and_without_hash(qapp):
+    from PySide6.QtCore import QSize
+
+    provider = IconProvider()
+    for color in ("00ff00", "#00ff00"):
+        size = QSize()
+        image = provider.requestImage(f"mic/{color}", size, QSize(32, 32))
+        assert image.width() == 32 and size.width() == 32
+        assert any(image.pixelColor(16, y).green() > 200 for y in range(32))
+
+
+def test_unknown_icon_does_not_crash(qapp):
+    from PySide6.QtCore import QSize
+
+    assert not IconProvider().requestImage("нет-такой/ffffff", QSize(), QSize(24, 24)).isNull()
+    assert b"viewBox" in svg("mic", "#ffffff")
+
+
+# ---------- модель ленты ----------
+
+
+def test_rows_group_same_speaker_and_color_is_stable():
+    colors = SpeakerColors()
+    rows = build_rows(
+        [
+            speech("Собеседник 1", 1, "а"),
+            speech("Собеседник 1", 4, "б"),
+            speech("Я", 8, "в", "mic"),
+            speech("Собеседник 2", 12, "г"),
+            speech("Собеседник 1", 16, "д"),
+        ],
+        [],
+        colors,
+    )
+    assert [r.first for r in rows] == [True, False, True, True, True]
+    assert [r.color for r in rows] == [0, 0, ME, 1, 0]  # первый собеседник всегда один и тот же цвет
+
+
+def test_marks_and_notes_have_their_own_rows_and_break_groups():
+    rows = build_rows(
+        [
+            speech("Собеседник 1", 1, "а"),
+            Utterance("", 5, "Баги по оплате", 5, SOURCE_MARK),
+            speech("Собеседник 1", 9, "б"),
+            Utterance("", 12, "Пауза", 12, SOURCE_NOTE),
+        ],
+        [],
+        SpeakerColors(),
+    )
+    assert [r.kind for r in rows] == ["speech", "mark", "speech", "note"]
+    assert rows[2].first  # после отметки имя показываем снова
+
+
+def test_partial_goes_last_and_empty_partials_are_skipped():
+    partial = TextEvent("system", "Собеседник 1", "partial", "недосказанное", 20, 22)
+    blank = TextEvent("mic", "Я", "partial", "", 21, 22)
+    rows = build_rows([speech("Собеседник 1", 1, "а")], [blank, partial], SpeakerColors())
+    assert [r.kind for r in rows] == ["speech", "partial"]
+    assert rows[-1].text == "недосказанное"
+
+
+def test_model_appends_only_the_tail(qapp):
+    model = TranscriptModel()
+    inserted, removed = [], []
+    model.rowsInserted.connect(lambda parent, first, last: inserted.append((first, last)))
+    model.rowsRemoved.connect(lambda parent, first, last: removed.append((first, last)))
+    items = [speech("Собеседник 1", 1, "а")]
+    model.update(items, [])
+    items = [*items, speech("Я", 5, "б", "mic")]
+    model.update(items, [])
+    assert inserted == [(0, 0), (1, 1)] and removed == []  # вторая реплика — вставка одной строки, а не перерисовка всего
+
+
+def test_model_replaces_partial_with_final_without_touching_earlier_rows(qapp):
+    model = TranscriptModel()
+    first = speech("Собеседник 1", 1, "а")
+    partial = TextEvent("system", "Собеседник 1", "partial", "что-то", 5, 7)
+    model.update([first], [partial])
+    changes = []
+    model.rowsRemoved.connect(lambda parent, a, b: changes.append(("removed", a, b)))
+    model.rowsInserted.connect(lambda parent, a, b: changes.append(("inserted", a, b)))
+    model.update([first, speech("Собеседник 1", 5, "что-то сказал")], [])
+    assert changes == [("removed", 1, 1), ("inserted", 1, 1)]  # изменился только хвост
+    assert model.rowCount() == 2
+
+
+def test_model_exposes_roles_to_qml(qapp):
+    model = TranscriptModel()
+    model.update([speech("Собеседник 1", 65, "текст")], [])
+    names = {bytes(n).decode() for n in model.roleNames().values()}
+    assert {"kind", "time", "speaker", "text", "colorIndex", "first"} <= names
+    index = model.index(0, 0)
+    by_name = {bytes(n).decode(): role for role, n in model.roleNames().items()}
+    assert model.data(index, by_name["text"]) == "текст" and model.data(index, by_name["time"]) == "01:05"
+
+
+# ---------- настройки ----------
+
+
+def test_settings_roundtrip_through_qml_map():
+    original = Settings(hotkey="alt+cmd", hotkey_action="record", theme="light")
+    data = settings_to_map(original)
+    assert data["hotkeyLabel"] and data["hotkey_action"] == "record"
+    assert map_to_settings(Settings(), data) == original
+
+
+def test_settings_from_qml_ignore_wrong_types_and_unknown_fields():
+    result = map_to_settings(Settings(), {"capture_mic": 0, "theme": "  ", "hotkey": "ctrl+alt+r", "левое": 1})
+    assert result.capture_mic is False and result.theme == "system" and result.hotkey == "ctrl+alt+r"
+
+
+def test_file_url_becomes_a_path():
+    assert to_path("file:///C:/Users/me/Мой файл.mp3") == Path("C:/Users/me/Мой файл.mp3")
+    assert to_path("/tmp/a.wav") == Path("/tmp/a.wav")
+
+
+# ---------- круговое меню ----------
+
+
+@pytest.mark.parametrize(
+    ("dx", "dy", "expected"),
+    [(0, -100, 0), (100, 0, 1), (0, 100, 2), (-100, 0, 3), (35, -90, 0), (90, -35, 1), (10, 5, -1)],
+)
+def test_sector_by_direction(dx, dy, expected):
+    assert sector_for(dx, dy, 4, 40) == expected
+
+
+def test_sector_zero_looks_up_and_goes_clockwise_for_six():
+    assert [sector_for(100 * s, -100 * c, 6, 40) for s, c in [(0, 1), (0.87, 0.5), (0.87, -0.5), (0, -1), (-0.87, -0.5), (-0.87, 0.5)]] == [0, 1, 2, 3, 4, 5]
+
+
+def test_sector_edge_cases():
+    assert sector_for(0, 0, 6, 40) == -1 and sector_for(100, 0, 0, 40) == -1
+
+
+# ---------- мост к контроллеру ----------
+
+
+def test_events_from_background_threads_reach_the_ui_thread(backend, qapp):
+    transcript = Transcript(datetime(2026, 1, 1), "Тема")
+    transcript.add(speech("Собеседник 1", 3, "привет"))
+    done = threading.Event()
+
+    def worker():  # так события приходят из потоков записи
+        backend._listener.on_transcript(transcript, Path("a.md"))
+        backend._listener.on_text(TextEvent("system", "Собеседник 1", "final", "привет", 3, 5))
+        done.set()
+
+    threading.Thread(target=worker).start()
+    assert pump(qapp, lambda: backend.transcript.rowCount() == 1)
+    assert done.is_set() and backend.transcriptTitle == "Тема"
+
+
+def test_state_change_updates_properties_and_timer(backend, qapp):
+    seen = []
+    backend.stateChanged.connect(lambda: seen.append(backend.state))
+    backend.controller.state = AppState.RECORDING
+    backend._listener.on_state(AppState.RECORDING)
+    assert pump(qapp, lambda: seen)
+    assert backend.state == "recording" and backend._elapsed_timer.isActive()
+    backend.controller.state = AppState.IDLE
+    backend._listener.on_state(AppState.IDLE)
+    assert pump(qapp, lambda: not backend._elapsed_timer.isActive())
+
+
+def test_levels_decay_smoothly_after_a_loud_moment(backend, qapp):
+    backend._listener.on_level("mic", 0.4)
+    assert pump(qapp, lambda: backend.micLevel > 0.5)  # ×3: тихий звук должен быть заметен на индикаторе
+    assert pump(qapp, lambda: backend.micLevel < 0.05, timeout=4)
+
+
+def test_hotkey_opens_the_radial_menu_at_the_cursor_or_records_directly(backend, qapp):
+    opened = []
+    backend.radialRequested.connect(lambda x, y: opened.append((x, y)))
+    backend._listener.on_hotkey()
+    assert pump(qapp, lambda: opened)
+    toggled = []
+    backend.controller.toggle_recording = lambda title="": toggled.append(title)
+    backend.controller.settings = Settings(hotkey_action="record")
+    backend._listener.on_hotkey()
+    assert pump(qapp, lambda: toggled == [""]) and len(opened) == 1
+
+
+def test_permission_error_reaches_qml_with_reset_flag(backend, qapp):
+    from govorilka.audio_base import PermissionDeniedError
+
+    asked = []
+    backend.permissionRequested.connect(lambda text, service, can_reset: asked.append((text, service, can_reset)))
+    backend._listener.on_permission(PermissionDeniedError("ScreenCapture", "Нет доступа"))
+    assert pump(qapp, lambda: asked) and asked[0][:2] == ("Нет доступа", "ScreenCapture")
+
+
+def test_radial_actions_call_the_controller(backend, qapp):
+    calls = []
+    backend.controller.toggle_pause = lambda: calls.append("pause")
+    backend.controller.stop_recording = lambda: calls.append("stop")
+    backend.controller.toggle_recording = lambda title="": calls.append("record")
+    for name in ("pause", "stop", "record", "нет-такого"):
+        backend.radialAction(name)
+    assert calls == ["pause", "stop", "record"]
+    shown = []
+    backend.windowRequested.connect(lambda: shown.append(1))
+    backend.radialAction("window")
+    assert shown == [1]
+
+
+def test_mark_without_recording_explains_itself(backend, qapp):
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append((text, kind)))
+    backend.addMark()
+    assert toasts and "во время записи" in toasts[0][0]
+
+
+def test_applying_settings_saves_and_reports(backend, qapp, monkeypatch):
+    from govorilka import controller as controller_module
+
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append((text, kind)))
+    backend.applySettings({"theme": "dark", "hotkey": "ctrl+alt+r", "capture_mic": False}, False)
+    assert backend.controller.settings.theme == "dark" and backend.controller.settings.capture_mic is False
+    assert toasts[-1][1] == "success"
+
+
+# ---------- окна QML ----------
+
+
+def test_qml_windows_load_without_warnings(backend, qapp):
+    from govorilka.qt.app import create_engine
+
+    engine = create_engine(backend, strict=True)
+    root = engine.rootObjects()[0]
+    for name in ("settings", "radial"):
+        assert root.findChild(QObject, name) is not None, name
+    assert root.property("title") == "Говорилка"
+
+
+def test_broken_qml_fails_loudly_instead_of_showing_an_empty_window(backend, qapp, monkeypatch, tmp_path):
+    from govorilka.qt import app as qt_app
+
+    (tmp_path / "Main.qml").write_text("import QtQuick\nItem { nonsense }", encoding="utf-8")
+    monkeypatch.setattr(qt_app, "QML_DIR", tmp_path)
+    with pytest.raises(qt_app.QmlLoadError):
+        qt_app.create_engine(backend)
+
+
+def test_qml_files_use_only_integer_pixel_sizes_and_known_icons():
+    """Ловим опечатки, которые Qt прощает молча: дробный шрифт и несуществующая иконка."""
+    import re
+
+    qml = Path(__file__).resolve().parent.parent / "govorilka" / "qml"
+    for path in qml.glob("*.qml"):
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"pixelSize:\s*\d+\.\d", text), path.name
+        for name in re.findall(r'(?:iconName|name):\s*"([a-z]+)"', text):
+            assert name in ICONS or name in {"idle"}, (path.name, name)
+
+
+# ---------- трей ----------
+
+
+def test_tray_menu_follows_the_state(backend, qapp):
+    from govorilka.qt.tray import Tray
+
+    tray = Tray(backend, lambda: None, lambda: None, lambda: None)
+
+    def labels():
+        tray._rebuild()
+        return [a.text() for a in tray._menu.actions() if a.text()]
+
+    idle = labels()
+    assert "Начать запись" in idle and "Пауза" not in idle
+    backend.controller.state = AppState.RECORDING
+    live = labels()
+    assert "Остановить запись" in live and "Пауза" in live and "Поставить отметку ★" in live
+    backend.controller.state = AppState.PAUSED
+    assert "Продолжить" in labels()
+    backend.controller.state = AppState.STARTING  # пока запись запускается, начать вторую нельзя
+    tray._rebuild()
+    starting = [a for a in tray._menu.actions() if a.text() == "Начать запись"]
+    assert starting and not starting[0].isEnabled()
+
+
+def test_tray_icons_exist_for_every_state(qapp):
+    from govorilka.qt.tray import tray_icon
+
+    for state in ("idle", "recording", "paused"):
+        assert not tray_icon(state).isNull()
+
+
+# ---------- тихие ошибки QML ----------
+
+
+def _qml_messages(qapp, action) -> list[str]:
+    """Qt молча теряет привязки, которые ссылаются на несуществующее (чужой id, опечатка): пишет в журнал,
+    а окно просто выглядит сломанным. Собираем эти сообщения, пока выполняется действие."""
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    messages: list[str] = []
+    previous = qInstallMessageHandler(
+        lambda kind, context, text: messages.append(text) if kind in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg) else None
+    )
+    try:
+        action()
+        for _ in range(25):
+            qapp.processEvents()
+    finally:
+        qInstallMessageHandler(previous)
+    return messages
+
+
+BAD = ("ReferenceError", "TypeError", "is not defined", "Unable to assign", "Cannot read", "Binding loop", "Cannot assign")
+
+
+def test_no_qml_runtime_errors_in_any_window_or_state(backend, qapp):
+    from govorilka.qt.app import create_engine
+
+    engine = create_engine(backend)
+    root = engine.rootObjects()[0]
+
+    def exercise():
+        root.show()
+        for state in (AppState.RECORDING, AppState.PAUSED, AppState.FILE, AppState.IDLE):
+            backend.controller.state = state
+            backend.stateChanged.emit()
+            qapp.processEvents()
+        transcript = Transcript(datetime(2026, 1, 1), "Тема")
+        for i, (who, source) in enumerate([("Собеседник 1", "system"), ("Я", "mic"), ("Собеседник 2", "system")]):
+            transcript.add(speech(who, i * 5, "Текст реплики " + str(i), source))
+        transcript.add(Utterance("", 20, "Баги по оплате", 20, SOURCE_MARK))
+        backend._on_transcript(transcript, Path("a.md"))
+        backend._partials["system"] = TextEvent("system", "Собеседник 1", "partial", "недосказанное", 25, 27)
+        backend._refresh()
+        backend._listener.on_permission(__import__("govorilka.audio_base", fromlist=["x"]).PermissionDeniedError("ScreenCapture", "Нет доступа"))
+        backend.toast.emit("Готово", "success")
+        backend.toast.emit("Ошибка", "error")
+        root.findChild(QObject, "settings").open()
+        backend.radialRequested.emit(300, 300)
+        backend.controller.state = AppState.RECORDING
+        backend.stateChanged.emit()
+        for theme in ("light", "dark"):
+            backend.controller.settings = Settings(theme=theme, reduce_motion=theme == "light")
+            backend.settingsChanged.emit()
+            qapp.processEvents()
+
+    problems = [m for m in _qml_messages(qapp, exercise) if any(bad in m for bad in BAD)]
+    assert problems == []
+
+
+def test_recording_pill_shows_only_while_recording_with_the_main_window_out_of_the_way(backend, qapp):
+    from govorilka.qt.app import create_engine
+
+    engine = create_engine(backend)
+    root = engine.rootObjects()[0]
+    pill = root.findChild(QObject, "pill")
+    assert pill is not None
+    backend.controller.settings = Settings(show_indicator=True)
+    backend.settingsChanged.emit()
+    root.hide()
+    backend.controller.state = AppState.RECORDING
+    backend.stateChanged.emit()
+    assert pump(qapp, lambda: pill.property("visible") is True), "плашка не показалась, хотя запись идёт, а окно скрыто"
+    backend.controller.state = AppState.IDLE
+    backend.stateChanged.emit()
+    assert pump(qapp, lambda: pill.property("visible") is False)
+
+
+def test_radial_menu_opens_even_when_the_main_window_is_hidden(backend, qapp):
+    """Главное окно в трее — меню по горячей клавише всё равно должно появиться."""
+    from govorilka.qt.app import create_engine
+
+    engine = create_engine(backend)
+    root = engine.rootObjects()[0]
+    radial = root.findChild(QObject, "radial")
+    root.hide()
+    backend.radialRequested.emit(400, 300)
+    assert pump(qapp, lambda: radial.property("visible") is True), "круговое меню не открылось при скрытом главном окне"
+    assert radial.property("width") >= 400
+
+
+# ---------- подписи говорящих в ленте ----------
+
+
+def test_rows_keep_grouping_and_color_after_a_speaker_is_renamed(qapp):
+    colors = SpeakerColors()
+    before = [speech("Собеседник 2", 1, "а"), speech("Собеседник 1", 5, "б"), speech("Собеседник 2", 9, "в")]
+    rows_before = build_rows(before, [], colors)
+    transcript = Transcript(datetime(2026, 1, 1), "т")
+    for u in before:
+        transcript.add(Utterance(u.speaker, u.start, u.text, u.end, u.source, u.speaker))
+    transcript.rename_voice("Собеседник 2", "Аня")
+    rows_after = build_rows(transcript.utterances, [], colors)
+    assert [r.speaker for r in rows_after] == ["Аня", "Собеседник 1", "Аня"]
+    assert [r.color for r in rows_after] == [r.color for r in rows_before]  # имя не перекрашивает человека
+    assert [r.voice_id for r in rows_after] == ["Собеседник 2", "Собеседник 1", "Собеседник 2"]
+
+
+def test_backend_rename_updates_the_feed_and_confirms(backend, qapp, tmp_path, monkeypatch):
+    from govorilka import controller as controller_module
+
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    transcript = Transcript(datetime(2026, 1, 1), "т")
+    transcript.add(Utterance("Собеседник 1", 3, "привет", 5, "system", "Собеседник 1"))
+    backend.controller.transcript = transcript
+    backend.controller.last_file = tmp_path / "x.md"
+    backend._on_transcript(transcript, tmp_path / "x.md")
+    backend._refresh()
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append((text, kind)))
+    backend.renameSpeaker("Собеседник 1", "Аня")
+    assert pump(qapp, lambda: backend.transcript.rows[0].speaker == "Аня")
+    assert toasts and "Аня" in toasts[0][0]
+    backend.renameSpeaker("Собеседник 1", "   ")  # пустое имя игнорируется молча
+    assert backend.transcript.rows[0].speaker == "Аня"
+
+
+def test_forgetting_voices_reports_the_count(backend, qapp, tmp_path, monkeypatch):
+    import numpy as np
+
+    from govorilka import controller as controller_module
+    from govorilka.voices import VoiceBook
+
+    monkeypatch.setattr(controller_module, "DATA_DIR", tmp_path)
+    book = VoiceBook(tmp_path / "voices.json")
+    book.remember("Аня", np.ones(256, np.float32))
+    book.save()
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append(text))
+    assert backend.knownVoices == 1
+    backend.forgetVoices()
+    assert backend.knownVoices == 0 and toasts[-1] == "Забыл голосов: 1"

@@ -158,3 +158,12 @@ def test_old_version_on_the_legacy_port_is_noticed():
         old_version.bind(("127.0.0.1", 0))
         old_version.listen(1)
         assert single_instance.legacy_instance_suspected(old_version.getsockname()[1]) is True
+
+
+def test_ui_selftest_passes_on_the_source_tree(tmp_path, monkeypatch, qapp):
+    """Та же проверка, что CI гоняет в собранном приложении, — здесь на исходниках."""
+    from govorilka import selftest
+
+    monkeypatch.setattr(selftest, "DATA_DIR", tmp_path)
+    assert selftest.run_ui() == 0, (tmp_path / "selftest-ui.txt").read_text(encoding="utf-8")
+    assert (tmp_path / "selftest-ui.txt").read_text(encoding="utf-8").startswith("OK")

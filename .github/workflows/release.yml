@@ -46,6 +46,12 @@ jobs:
           $p = Start-Process -FilePath dist\Govorilka.exe -ArgumentList "--selftest", "tests\fixtures\speech_ru.wav" -Wait -PassThru
           Get-Content ci-data\selftest.txt -Encoding utf8
           exit $p.ExitCode
+      - name: Self-test UI (windows load without errors and draw something)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\Govorilka.exe -ArgumentList "--selftest-ui" -Wait -PassThru
+          Get-Content ci-data\selftest-ui.txt -Encoding utf8
+          exit $p.ExitCode
       - name: Rename
         shell: bash
         run: mv dist/Govorilka.exe "dist/Govorilka-${GOVORILKA_VERSION:-dev}-windows-x64.exe"
@@ -113,6 +119,13 @@ jobs:
           dist/Govorilka.app/Contents/MacOS/Govorilka --selftest tests/fixtures/speech_ru.wav
           code=$?
           cat ci-data/selftest.txt
+          exit $code
+      - name: Self-test UI (windows load without errors and draw something)
+        run: |
+          set +e
+          dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-ui
+          code=$?
+          cat ci-data/selftest-ui.txt
           exit $code
       - name: Build dmg
         run: |

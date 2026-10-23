@@ -114,6 +114,7 @@ class FileJob:
         self._on_done = on_done
         self._cancel = threading.Event()
         self._last_save = 0.0
+        self.diarizer: Diarizer | None = None
         self._thread = threading.Thread(target=self._run, name="file-job", daemon=True)
 
     @property
@@ -156,6 +157,7 @@ class FileJob:
     def _transcribe_audio(self, audio: DecodedAudio) -> None:
         duration, chunks = audio.duration, audio.chunks
         diarizer = Diarizer(self._engines.speakers.embed) if self._diarize else None
+        self.diarizer = diarizer
         processor = PhraseProcessor(SOURCE_FILE, SPEAKER_FILE, self._engines.recognizer, self._collect, diarizer)
         segmenter = Segmenter(detector=self._engines.vad.detector())
         reported = -1.0
@@ -174,7 +176,7 @@ class FileJob:
 
     def _collect(self, event: TextEvent) -> None:
         if event.kind == "final":
-            self.transcript.add(Utterance(event.speaker, event.start, event.text, event.end, event.source))
+            self.transcript.add(Utterance(event.speaker, event.start, event.text, event.end, event.source, event.speaker))
             # файл расшифровывается быстро — сохраняем не после каждой фразы, а раз в несколько секунд
             if time.monotonic() - self._last_save >= SAVE_EVERY_S:
                 self.saver.save()

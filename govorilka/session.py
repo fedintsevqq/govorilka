@@ -18,7 +18,7 @@ from pathlib import Path
 from govorilka.aec import EchoCanceller, ReferenceTee
 from govorilka.audio import AudioChunk, AudioError, AudioSystem, Capture
 from govorilka.audio_base import PermissionDeniedError
-from govorilka.config import SOURCE_MIC, SOURCE_SYSTEM, SPEAKER_ME, SPEAKER_OTHERS, Settings
+from govorilka.config import SOURCE_MARK, SOURCE_MIC, SOURCE_NOTE, SOURCE_SYSTEM, SPEAKER_ME, SPEAKER_OTHERS, Settings
 from govorilka.echo import is_echo
 from govorilka.engines import Engines
 from govorilka.pipeline import LevelCallback, PhraseProcessor, SourcePipeline, TextEvent
@@ -68,6 +68,9 @@ class Session:
         self._device_lock = threading.Lock()  # переподключение и остановка не должны пересекаться
         self._closed = False
         self._canceller: EchoCanceller | None = None
+        self._diarizers: dict[str, Diarizer] = {}
+        self._t0 = time.monotonic()
+        self.paused = False
         self._last_retry = 0.0
         self._last_notice = ""
         self._lock = threading.Lock()
@@ -79,6 +82,7 @@ class Session:
 
     def start(self) -> None:
         t0 = time.monotonic()
+        self._t0 = t0
         if self._settings.echo_filter and self._settings.capture_mic and self._settings.capture_system:
             self._canceller = self._make_canceller()
         try:
@@ -98,8 +102,14 @@ class Session:
         self._watcher.start()
         self.saver.save()
 
+    def diarizers(self) -> dict[str, Diarizer]:
+        """Отпечатки голосов по источникам — для уточнения после созвона."""
+        return {name: d for name, d in self._diarizers.items() if d.history}
+
     def _add_source(self, name: str, speaker: str, find_device: str, t0: float, diarize: bool) -> None:
         diarizer = Diarizer(self._engines.speakers.embed) if diarize else None
+        if diarizer is not None:
+            self._diarizers[name] = diarizer
         processor = PhraseProcessor(
             name, speaker, self._engines.recognizer, self._handle_text, diarizer, on_problem=self._notify
         )
@@ -225,7 +235,7 @@ class Session:
         if event.kind != "final":
             self._on_text(event)
             return
-        utterance = Utterance(event.speaker, event.start, event.text, event.end, event.source)
+        utterance = Utterance(event.speaker, event.start, event.text, event.end, event.source, event.speaker)
         with self._lock:
             if self._settings.echo_filter and self._drop_echo(utterance):
                 self._on_text(replace(event, kind="discard", text=""))
@@ -249,6 +259,39 @@ class Session:
         if echoes:
             self.transcript.remove(echoes)
         return False
+
+    # ---------- пауза и отметки ----------
+
+    def elapsed(self) -> float:
+        """Секунды от начала записи — в тех же единицах, что и время реплик."""
+        return time.monotonic() - self._t0
+
+    def pause(self) -> None:
+        if self.paused or self._closed:
+            return
+        self.paused = True
+        for source in self._sources:
+            source.pipeline.pause()
+        self._add_note(SOURCE_NOTE, "Пауза")
+
+    def resume(self) -> None:
+        if not self.paused or self._closed:
+            return
+        self.paused = False
+        for source in self._sources:
+            source.pipeline.resume()
+        self._add_note(SOURCE_NOTE, "Запись продолжена")
+
+    def add_mark(self, text: str = "Отметка") -> None:
+        """Отметка момента: «тут обсуждали баг». В транскрипте и в запросе к Claude видна как ★."""
+        self._add_note(SOURCE_MARK, text)
+
+    def _add_note(self, source: str, text: str) -> None:
+        now = self.elapsed()
+        with self._lock:
+            self.transcript.add(Utterance("", now, text, now, source))
+            self.saver.save()
+        self._on_text(TextEvent(source, "", "final", text, now, now))
 
     # ---------- остановка ----------
 

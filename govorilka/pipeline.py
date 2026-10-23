@@ -100,7 +100,7 @@ class PhraseProcessor:
         if self._diarizer is None or event.kind != "final":
             return self.speaker
         try:
-            return f"{self.speaker} {self._diarizer.assign(event.audio)}"
+            return f"{self.speaker} {self._diarizer.assign(event.audio, key=event.start)}"
         except Exception:
             # сбой определения голоса не должен стоить текста: оставляем общее имя и говорим об этом один раз
             log.exception("Ошибка определения голоса (%s)", self.speaker)
@@ -134,10 +134,19 @@ class SourcePipeline:
         self._on_level = on_level
         self._segmenter = Segmenter(detector=detector)
         self._stop = threading.Event()
+        self._paused = threading.Event()
+        self._flushed_for_pause = False  # недосказанную фразу закрываем один раз в начале паузы
         self._thread = threading.Thread(target=self._run, name=f"pipeline-{processor.source}", daemon=True)
 
     def start(self) -> None:
         self._thread.start()
+
+    def pause(self) -> None:
+        """Звук продолжает приходить, но выбрасывается. Начатая фраза распознаётся до конца."""
+        self._paused.set()
+
+    def resume(self) -> None:
+        self._paused.clear()
 
     def stop(self) -> None:
         """Дорабатывает то, что уже в очереди, и закрывает последнюю фразу."""
@@ -150,6 +159,10 @@ class SourcePipeline:
                 chunk = self.queue.get(timeout=0.2)
             except queue.Empty:
                 continue
+            if self._paused.is_set():
+                self._close_phrase_for_pause()
+                continue
+            self._flushed_for_pause = False
             try:
                 self._process(chunk)
             except Exception:  # поток не должен умирать молча — иначе распознавание встанет
@@ -159,6 +172,16 @@ class SourcePipeline:
                 self.processor.handle(event)
         except Exception:
             log.exception("Ошибка при закрытии последней фразы (%s)", self.processor.source)
+
+    def _close_phrase_for_pause(self) -> None:
+        if self._flushed_for_pause:
+            return
+        self._flushed_for_pause = True
+        try:
+            for event in self._segmenter.flush():
+                self.processor.handle(event)
+        except Exception:
+            log.exception("Ошибка при закрытии фразы перед паузой (%s)", self.processor.source)
 
     def _process(self, chunk: AudioChunk) -> None:
         if self._prepare is not None:

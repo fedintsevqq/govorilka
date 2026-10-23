@@ -110,3 +110,53 @@ def run(media: Path) -> int:
         log.exception("Самопроверка не прошла")
         report.write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
         return 1
+
+
+def run_ui() -> int:
+    """Проверка интерфейса в собранном приложении: окна QML грузятся без ошибок и рисуют не пустоту.
+
+    Работает без экрана и без видеокарты (программная отрисовка), поэтому годится для сервера сборки.
+    Результат — в selftest-ui.txt в папке данных, код выхода 0 — всё хорошо.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
+    report = DATA_DIR / "selftest-ui.txt"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        from PySide6.QtCore import QObject
+        from PySide6.QtQuickControls2 import QQuickStyle
+        from PySide6.QtWidgets import QApplication
+
+        from govorilka.qt.app import create_engine
+        from govorilka.qt.backend import Backend
+        from govorilka.qt.icons import ICONS, render
+        from govorilka.qt.tray import tray_icon
+
+        QQuickStyle.setStyle("Basic")
+        app = QApplication.instance() or QApplication(["selftest-ui"])
+        backend = Backend()
+        engine = create_engine(backend, strict=True)  # любая ошибка QML — исключение
+        root = engine.rootObjects()[0]
+        root.setWidth(1120)
+        root.setHeight(740)
+        root.show()
+        for _ in range(20):
+            app.processEvents()
+        picture = root.grabWindow()
+        colors = {picture.pixel(x, y) for x in range(0, picture.width(), 9) for y in range(0, picture.height(), 9)}
+        problems = []
+        if picture.isNull() or len(colors) < 40:
+            problems.append(f"окно нарисовано пустым: {len(colors)} цветов")
+        for name in ("settings", "radial"):
+            if root.findChild(QObject, name) is None:
+                problems.append(f"в окне нет «{name}»")
+        if any(render(name, "#ffffff", 24).isNull() for name in ICONS):
+            problems.append("часть иконок не рисуется")
+        if any(tray_icon(state).isNull() for state in ("idle", "recording", "paused")):
+            problems.append("нет значков для трея")
+        report.write_text("\n".join(["FAIL" if problems else "OK", *problems, f"цветов в окне: {len(colors)}"]) + "\n", encoding="utf-8")
+        return 1 if problems else 0
+    except Exception:
+        log.exception("Самопроверка интерфейса не прошла")
+        report.write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
+        return 1

@@ -337,11 +337,16 @@ class HotkeyWatcher:
         on_error: Callable[[str], None] = lambda _: None,
         keyboard: Keyboard | None = None,
         clock: Callable[[], float] | None = None,
+        on_release: Callable[[], None] = lambda: None,
     ) -> None:
         import time
 
         self._on_trigger = on_trigger
         self._on_error = on_error
+        # После срабатывания ждём, когда отпустят все клавиши: так работает жест кругового меню
+        # «зажал → навёл мышь на сектор → отпустил».
+        self._on_release = on_release
+        self._awaiting_release = False
         self._keyboard = keyboard
         self._clock = clock or time.monotonic
         self._detector: HotkeyDetector | None = None
@@ -374,6 +379,7 @@ class HotkeyWatcher:
 
     def _run(self) -> None:
         reported = False
+        failures = 0
         while not self._stop.wait(POLL_S):
             with self._lock:
                 detector = self._detector
@@ -382,16 +388,26 @@ class HotkeyWatcher:
             try:
                 if self._keyboard is None:
                     self._keyboard = system_keyboard()
-                fired = detector.update(self._keyboard.snapshot(), self._clock())
+                snap = self._keyboard.snapshot()
+                fired = detector.update(snap, self._clock())
             except Exception as exc:  # noqa: BLE001 — опрос не должен умирать молча, но и не должен падать
-                log.exception("Не получается читать состояние клавиш")
+                failures += 1
+                if failures == 1 or failures % 30 == 0:  # раз в минуту, а не каждые две секунды
+                    log.exception("Не получается читать состояние клавиш (подряд сбоев: %d)", failures)
                 if not reported:
                     reported = True
                     self._on_error(f"Горячая клавиша не работает: {exc}")
                 self._stop.wait(2.0)
                 continue
             if fired:
+                self._awaiting_release = True
                 try:
                     self._on_trigger()
                 except Exception:
                     log.exception("Ошибка в обработчике горячей клавиши")
+            elif self._awaiting_release and not snap.mods and not snap.keys:
+                self._awaiting_release = False
+                try:
+                    self._on_release()
+                except Exception:
+                    log.exception("Ошибка в обработчике отпускания горячей клавиши")

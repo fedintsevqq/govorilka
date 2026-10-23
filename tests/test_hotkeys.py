@@ -1,8 +1,6 @@
-import gc
 import socket
 import sys
 import time
-import tkinter as tk
 
 import pytest
 
@@ -308,54 +306,3 @@ def test_copy_in_another_process_holds_the_lock(tmp_path):
     lock = single_instance.acquire(lambda: None, folder=tmp_path)
     assert lock is not None
     lock.close()
-
-
-# ---------- окна ----------
-
-
-@pytest.fixture
-def root():
-    try:
-        window = tk.Tk()
-    except tk.TclError:
-        pytest.skip("нет дисплея")
-    window.withdraw()
-    yield window
-    window.destroy()
-    # переменные Tk удаляем здесь, в главном потоке: иначе сборщик мусора доберётся до них в потоке записи
-    # следующего теста, и Tk будет ждать главный цикл, которого в тестах нет (тормоза и предупреждение)
-    gc.collect()
-
-
-def test_indicator_shows_updates_and_hides(root):
-    from govorilka.indicator import RECORDING, RecordingIndicator
-
-    indicator = RecordingIndicator(root)
-    indicator.show("Запись 00:00", RECORDING)
-    root.update()
-    indicator.update_text("Запись 00:05")
-    assert indicator._label.cget("text") == "Запись 00:05"
-    indicator.hide()
-    root.update()
-    assert not indicator._window.winfo_viewable()
-
-
-def test_settings_dialog_records_a_new_hotkey(root):
-    from dataclasses import replace
-
-    from govorilka import settings_dialog
-    from govorilka.config import Settings
-
-    saved = []
-    dialog = settings_dialog.SettingsDialog(root, replace(Settings(), hotkey="ctrl+shift"), False, lambda s, a: saved.append((s, a)))
-    keyboard = ScriptedKeyboard([snap(), snap("alt"), snap("alt+cmd"), snap()])
-    dialog._recorder = settings_dialog.ChordRecorder()
-    dialog._deadline = time.monotonic() + 5
-    for _ in range(4):
-        dialog._poll_capture(keyboard)
-    assert dialog._chord == parse_chord("alt+cmd")
-    dialog.hotkey_enabled_var.set(True)
-    dialog.autostart_var.set(True)
-    dialog._save()
-    settings, autostart_on = saved[0]
-    assert settings.hotkey == "alt+cmd" and autostart_on is True

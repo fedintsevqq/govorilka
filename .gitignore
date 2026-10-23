@@ -17,3 +17,5 @@ selftest.txt
 govorilka.log
 govorilka.lock
 govorilka.port
+selftest-ui.txt
+govorilka.log.*

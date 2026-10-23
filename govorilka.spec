@@ -14,11 +14,44 @@ MAC_MIN_OS = "13.0" if MAC_ARCH == "x86_64" else "14.0"  # под onnxruntime д
 datas = collect_data_files("onnx_asr")  # предобработчики звука в .onnx лежат внутри пакета
 # livekit грузит нативную библиотеку WebRTC (эхоподавление) из своего пакета через importlib.resources
 datas += collect_data_files("livekit", includes=["rtc/resources/*"])
+# интерфейс: окна QML и иконки лежат рядом с кодом, из собранного приложения их читает Qt
+datas += [("govorilka/qml", "govorilka/qml"), ("govorilka/assets", "govorilka/assets")]
+
+
+def qt_qml_modules():
+    """Модули QML, которые нужны нашим окнам. PyInstaller сам по QML-файлам их не находит."""
+    import PySide6
+
+    base = os.path.join(os.path.dirname(PySide6.__file__), "qml")
+    wanted = ["QtQml", "QtQuick/Window", "QtQuick/Layouts", "QtQuick/Shapes", "QtQuick/Effects", "QtQuick/Dialogs",
+              "QtQuick/Templates", "QtQuick/Controls/Basic", "QtQuick/Controls/impl"]
+    found = []
+    for module in wanted:
+        folder = os.path.join(base, *module.split("/"))
+        if not os.path.isdir(folder):
+            continue
+        for root, _dirs, files in os.walk(folder):
+            for name in files:
+                relative = os.path.relpath(root, os.path.dirname(PySide6.__file__))
+                found.append((os.path.join(root, name), os.path.join("PySide6", relative)))
+    for top in ("QtQuick", "QtQuick/Controls"):  # файлы верхнего уровня (qmldir, плагин), без вложенных стилей
+        folder = os.path.join(base, *top.split("/"))
+        for name in os.listdir(folder):
+            full = os.path.join(folder, name)
+            if os.path.isfile(full):
+                found.append((full, os.path.join("PySide6", "qml", *top.split("/"))))
+    return found
+
+
+qml_files = qt_qml_modules()
+# .dll/.dylib плагинов QML — бинарные файлы (на Mac их надо подписывать), остальное — данные
+binaries_qml = [item for item in qml_files if item[0].lower().endswith((".dll", ".dylib", ".so"))]
+datas += [item for item in qml_files if item not in binaries_qml]
 # onnx_asr и huggingface_hub при импорте читают версии пакетов через importlib.metadata
 for package in ("onnx-asr", "onnxruntime", "huggingface_hub", "numpy"):
     datas += copy_metadata(package)
 # библиотеку WebRTC кладём как бинарный файл: на Mac только так она попадает под подпись приложения
-binaries = collect_dynamic_libs("livekit")
+binaries = collect_dynamic_libs("livekit") + binaries_qml
 if IS_MAC:
     binaries.append(("bin/govorilka-audiotap", "bin"))  # Swift-помощник, собирается заранее
 
@@ -37,8 +70,20 @@ a = Analysis(
         "soxr",
         "livekit.rtc",
         "livekit.rtc.resources",
+        "govorilka.qt.app",
+        "PySide6.QtQuick",
+        "PySide6.QtQml",
+        "PySide6.QtQuickControls2",
+        "PySide6.QtSvg",
+        "PySide6.QtWidgets",
     ],
-    excludes=["torch", "matplotlib", "IPython", "pytest"],
+    excludes=[
+        "torch", "matplotlib", "IPython", "pytest", "tkinter", "PIL",
+        # из Qt нам нужен только QML, трей и SVG: остальное только раздувает приложение
+        "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore", "PySide6.QtCharts",
+        "PySide6.QtDataVisualization", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtDesigner",
+        "PySide6.QtSql", "PySide6.QtTest", "PySide6.QtBluetooth", "PySide6.QtNetworkAuth",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -52,11 +97,13 @@ if IS_MAC:
         name="Govorilka",
         console=False,
         target_arch=MAC_ARCH,
+        icon="govorilka/assets/icon.icns",
     )
     coll = COLLECT(exe, a.binaries, a.datas, name="Govorilka")
     app = BUNDLE(
         coll,
         name="Govorilka.app",
+        icon="govorilka/assets/icon.icns",
         bundle_identifier="io.github.fedintsevqq.govorilka",
         version=VERSION,
         info_plist={
@@ -78,4 +125,5 @@ else:
         name="Govorilka",
         console=False,
         upx=False,
+        icon="govorilka/assets/icon.ico",
     )

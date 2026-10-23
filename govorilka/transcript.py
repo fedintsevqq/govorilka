@@ -7,11 +7,16 @@ import os
 import re
 import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
+
 log = logging.getLogger(__name__)
+
+SOURCE_MARK = "mark"  # отметка момента («тут обсуждали баг»)
+SOURCE_NOTE = "note"  # служебная строка: пауза, продолжение записи
 
 
 @dataclass(frozen=True)
@@ -21,6 +26,7 @@ class Utterance:
     text: str
     end: float = -1.0  # -1 — конец неизвестен, считаем равным началу
     source: str = ""  # откуда звук: mic, system или file (см. config.SOURCE_*)
+    voice_id: str = ""  # стабильный ярлык голоса («Собеседник 2»); speaker — то, что показываем (может быть именем)
 
     def __post_init__(self) -> None:
         if self.end < self.start:
@@ -46,11 +52,68 @@ class Transcript:
         self.started_at = started_at
         self.title = title
         self._items: list[Utterance] = []
+        self.aliases: dict[str, str] = {}  # ярлык голоса -> имя, которое дал пользователь или узнала память голосов
+        self.centroids: dict[str, np.ndarray] = {}  # ярлык голоса -> усреднённый отпечаток (для памяти голосов)
+        self.user_named: set[str] = set()  # ярлыки, которым имя дал пользователь (а не угадала память голосов)
         self._lock = threading.Lock()
 
     def add(self, utterance: Utterance) -> None:
         with self._lock:
             self._items = sorted([*self._items, utterance], key=lambda u: u.start)
+
+    def rename_voice(self, voice_id: str, name: str) -> int:
+        """Переименовывает говорящего во всех его репликах. Возвращает, сколько реплик поменялось."""
+        name = name.strip()
+        if not name:
+            return 0
+        changed = 0
+        with self._lock:
+            items = []
+            for u in self._items:
+                if (u.voice_id or u.speaker) == voice_id and u.speaker != name:
+                    u = replace(u, speaker=name, voice_id=u.voice_id or voice_id)
+                    changed += 1
+                items.append(u)
+            self._items = items
+            self.aliases[voice_id] = name
+            self.user_named.add(voice_id)
+        return changed
+
+    def replace_all(self, items: list[Utterance]) -> None:
+        with self._lock:
+            self._items = sorted(items, key=lambda u: u.start)
+
+    def snapshot(self) -> tuple[list[Utterance], dict[str, str], set[str]]:
+        """Реплики, имена и «имена от пользователя» одним согласованным снимком."""
+        with self._lock:
+            return list(self._items), dict(self.aliases), set(self.user_named)
+
+    def centroids_snapshot(self) -> dict[str, np.ndarray]:
+        with self._lock:
+            return dict(self.centroids)
+
+    def apply_refined(
+        self,
+        items: list[Utterance],
+        aliases: dict[str, str],
+        centroids: dict[str, np.ndarray],
+        user_named: set[str],
+    ) -> None:
+        """Применяет результат уточнения голосов целиком и сразу: реплики, имена и отпечатки меняются под одной блокировкой."""
+        with self._lock:
+            self._items = sorted(items, key=lambda u: u.start)
+            self.aliases = dict(aliases)
+            self.centroids = dict(centroids)
+            self.user_named = set(user_named)
+
+    def restore(self, state: tuple[list[Utterance], dict[str, str], set[str], dict[str, np.ndarray]]) -> None:
+        """Возвращает транскрипт к снимку (если уточнение не удалось сохранить)."""
+        items, aliases, user_named, centroids = state
+        self.apply_refined(items, aliases, centroids, user_named)
+
+    def full_state(self) -> tuple[list[Utterance], dict[str, str], set[str], dict[str, np.ndarray]]:
+        with self._lock:
+            return list(self._items), dict(self.aliases), set(self.user_named), dict(self.centroids)
 
     def remove(self, doomed: Iterable[Utterance]) -> None:
         doomed_ids = {id(u) for u in doomed}
@@ -76,12 +139,22 @@ class Transcript:
             "",
         ]
         for u in self.utterances:
-            lines.append(f"**[{format_offset(u.start)}] {u.speaker}:** {u.text}")
+            lines.append(format_line(u, markdown=True))
             lines.append("")
         return "\n".join(lines)
 
     def to_plain_text(self) -> str:
-        return "\n".join(f"[{format_offset(u.start)}] {u.speaker}: {u.text}" for u in self.utterances)
+        return "\n".join(format_line(u, markdown=False) for u in self.utterances)
+
+
+def format_line(u: Utterance, markdown: bool) -> str:
+    """Одна строка транскрипта. Отметки и паузы пишутся иначе, чем реплики: у них нет говорящего."""
+    stamp = f"[{format_offset(u.start)}]"
+    if u.source == SOURCE_MARK:
+        return f"**{stamp} ★ {u.text}**" if markdown else f"{stamp} ★ {u.text}"
+    if u.source == SOURCE_NOTE:
+        return f"_{stamp} {u.text}_" if markdown else f"{stamp} {u.text}"
+    return f"**{stamp} {u.speaker}:** {u.text}" if markdown else f"{stamp} {u.speaker}: {u.text}"
 
 
 def write_atomic(path: Path, text: str) -> None:
