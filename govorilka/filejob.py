@@ -158,7 +158,10 @@ class FileJob:
         duration, chunks = audio.duration, audio.chunks
         diarizer = Diarizer(self._engines.speakers.embed) if self._diarize else None
         self.diarizer = diarizer
-        processor = PhraseProcessor(SOURCE_FILE, SPEAKER_FILE, self._engines.recognizer, self._collect, diarizer)
+        processor = PhraseProcessor(
+            SOURCE_FILE, SPEAKER_FILE, self._engines.recognizer, self._collect, diarizer,
+            on_relabel=lambda source, labels: self.transcript.relabel(source, labels),
+        )
         segmenter = Segmenter(detector=self._engines.vad.detector())
         reported = -1.0
         for chunk in chunks:

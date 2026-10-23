@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from govorilka.names import suggest_names
 from govorilka.speakers import Diarizer, Sample, cluster_centroids, cluster_samples
 from govorilka.transcript import Transcript, Utterance
 from govorilka.voices import VoiceBook
@@ -28,6 +29,7 @@ class RefineResult:
     speakers: int  # сколько собеседников нашлось
     changed: int  # у скольких реплик подпись поменялась
     recognized: list[str]  # кого узнали по памяти голосов
+    heard: list[str] = ()  # кого назвали по самому разговору («меня зовут Аня»)
 
 
 def _usable(sample: Sample) -> bool:
@@ -82,6 +84,8 @@ def refine_transcript(
 
     names, named_by_user = _carry_names(aliases, user_named, members)
     recognized = _recognize(centroids, voicebook, names)
+    heard = suggest_names(relabeled, set(diarizers), names)  # безымянных называем по разговору
+    names |= heard
     final = [replace(u, speaker=names[u.voice_id]) if u.voice_id in names else u for u in relabeled]
     changed = sum(1 for a, b in zip(items, final) if (a.speaker, a.voice_id) != (b.speaker, b.voice_id))
 
@@ -90,7 +94,9 @@ def refine_transcript(
     merged_aliases = {k: v for k, v in aliases.items() if k not in replaced_labels} | names
     merged_user = {k for k in user_named if k not in replaced_labels} | named_by_user
     transcript.apply_refined(final, merged_aliases, centroids, merged_user)
-    return RefineResult(len(centroids), changed, [names[label] for label in names if label in recognized])
+    return RefineResult(
+        len(centroids), changed, [names[label] for label in names if label in recognized], list(heard.values())
+    )
 
 
 def _carry_names(

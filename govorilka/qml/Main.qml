@@ -12,7 +12,7 @@ ApplicationWindow {
     width: 1120
     height: 740
     minimumWidth: 900
-    minimumHeight: 660
+    minimumHeight: 700   // ниже пульт записи не помещается целиком
     visible: true
     title: "Говорилка"
     color: Theme.bg
@@ -82,6 +82,7 @@ ApplicationWindow {
                 color: Theme.text
             }
             Eyebrow {
+                Layout.minimumWidth: 116   // подпись состояния меняет длину — поле темы рядом не прыгает
                 text: window.stateLabel()
                 tint: window.stateTint()
                 dot: window.phase === "recording"
@@ -156,7 +157,9 @@ ApplicationWindow {
                     Behavior on color { ColorAnimation { duration: Theme.base } }
                 }
                 Text {
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                     Layout.topMargin: 2
                     text: window.live ? (window.phase === "paused" ? "Пауза — звук не пишется" : "Говорите — текст появится справа")
                                       : window.phase === "file" ? "Расшифровываю файл…" : "Нажмите, чтобы начать"
@@ -168,19 +171,21 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.topMargin: 14
                     spacing: 8
-                    opacity: window.live ? 1 : 0.35
-                    enabled: window.live
+                    // не выключаем, а приглушаем: подсказка при наведении объясняет, что это и когда работает
+                    opacity: window.live ? 1 : 0.45
                     Behavior on opacity { NumberAnimation { duration: Theme.base } }
                     PillButton {
                         Layout.fillWidth: true
                         text: window.phase === "paused" ? "Продолжить" : "Пауза"
                         iconName: window.phase === "paused" ? "play" : "pause"
+                        tip: window.phase === "paused" ? "Продолжить запись с того же места" : "Поставить запись на паузу: звук не пишется, пока не продолжите"
                         onClicked: backend.togglePause()
                     }
                     PillButton {
                         Layout.fillWidth: true
                         text: "Отметка"
                         iconName: "star"
+                        tip: "Отметить важный момент. В тексте и в файле появится звёздочка со временем, чтобы потом быстро найти это место. Горячая клавиша Ctrl+M"
                         onClicked: backend.addMark()
                     }
                 }
@@ -200,10 +205,10 @@ ApplicationWindow {
                     spacing: 7
                     enabled: window.idle
                     opacity: enabled ? 1 : 0.55
-                    ChipToggle { text: "Микрофон"; iconName: "mic"; checked: window.opts.capture_mic; onToggled: backend.setOption("capture_mic", checked) }
-                    ChipToggle { text: "Звук компьютера"; iconName: "speaker"; checked: window.opts.capture_system; onToggled: backend.setOption("capture_system", checked) }
-                    ChipToggle { text: "Без эха"; iconName: "echo"; checked: window.opts.echo_filter; onToggled: backend.setOption("echo_filter", checked) }
-                    ChipToggle { text: "Голоса"; iconName: "people"; checked: window.opts.split_speakers; onToggled: backend.setOption("split_speakers", checked) }
+                    ChipToggle { text: "Микрофон"; iconName: "mic"; checked: window.opts.capture_mic; onToggled: backend.setOption("capture_mic", checked); tip: "Записывать ваш микрофон — реплики «Я»" }
+                    ChipToggle { text: "Звук компьютера"; iconName: "speaker"; checked: window.opts.capture_system; onToggled: backend.setOption("capture_system", checked); tip: "Записывать звук компьютера — голоса собеседников из Zoom, Телемоста, Teams" }
+                    ChipToggle { text: "Без эха"; iconName: "echo"; checked: window.opts.echo_filter; onToggled: backend.setOption("echo_filter", checked); tip: "Убирать из микрофона звук колонок, чтобы собеседники не попадали в «Я». В наушниках можно выключить" }
+                    ChipToggle { text: "Голоса"; iconName: "people"; checked: window.opts.split_speakers; onToggled: backend.setOption("split_speakers", checked); tip: "Различать собеседников по голосу: «Собеседник 1», «Собеседник 2»…" }
                 }
 
                 Item { Layout.fillHeight: true }
@@ -213,8 +218,10 @@ ApplicationWindow {
                     Layout.bottomMargin: 8
                     Layout.topMargin: 6
                     text: backend.statusText
-                    wrapMode: Text.NoWrap
+                    wrapMode: Text.Wrap          // статус целиком, в две-три строки, а не обрезанный многоточием
+                    maximumLineCount: 3
                     elide: Text.ElideRight
+                    lineHeight: 1.15
                     font.pixelSize: 12
                     color: Theme.textTertiary
                     HoverHandler { id: statusHover }
@@ -228,6 +235,7 @@ ApplicationWindow {
                     variant: "primary"
                     text: "Отправить в Claude Code"
                     iconName: "sparkle"
+                    tip: "Открыть Claude Code с этим транскриптом и вашей подсказкой из настроек: итоги, задачи, письмо"
                     onClicked: backend.sendToClaude()
                 }
 
@@ -236,6 +244,13 @@ ApplicationWindow {
                     Layout.topMargin: 10
                     spacing: 5
                     visible: window.opts.hotkey_enabled
+                    HoverHandler { id: keysHover }
+                    Tip {
+                        shown: keysHover.hovered
+                        text: window.opts.hotkey_action === "record"
+                              ? "Зажмите эти клавиши и подержите полсекунды — запись начнётся или остановится. Работает из любой программы"
+                              : "Зажмите эти клавиши и подержите полсекунды — у курсора откроется круговое меню. Работает из любой программы"
+                    }
                     Repeater {
                         model: String(window.opts.hotkeyLabel).split(" + ")
                         KeyCap { required property string modelData; text: modelData }
@@ -380,7 +395,7 @@ ApplicationWindow {
     Timer { interval: 600; running: !window.opts.tour_done; onTriggered: if (!window.opts.tour_done && window.visible) tour.begin() }
 
     SettingsWindow { id: settingsWindow; onTourRequested: { window.showWindow(); tour.begin() } }
-    RadialMenu { id: radial; practice: tour.practiceStep }
+    RadialMenu { id: radial; practice: tour.opened }
     RecordingPill { mainHidden: !window.visible || window.visibility === Window.Minimized || !window.active }
 
     Connections {

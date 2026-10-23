@@ -32,7 +32,5 @@ AbstractButton {
     scale: down ? 0.94 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
 
-    ToolTip.visible: tip !== "" && hovered
-    ToolTip.delay: 450
-    ToolTip.text: tip
+    Tip { text: control.tip; shown: control.hovered || control.visualFocus }
 }

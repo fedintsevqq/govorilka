@@ -4,6 +4,7 @@ import QtQuick.Controls
 // Переключатель-чипса: иконка + подпись, включённое состояние подсвечено акцентом.
 AbstractButton {
     id: control
+    property string tip: ""   // подсказка при наведении
     property string iconName: "mic"
     checkable: true
     implicitHeight: 32
@@ -45,4 +46,5 @@ AbstractButton {
     }
     scale: down ? 0.96 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
+    Tip { text: control.tip; shown: control.hovered || control.visualFocus }
 }

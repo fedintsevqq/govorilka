@@ -27,7 +27,9 @@ Item {
         checkable: true
         checked: row.checked
         focusPolicy: Qt.TabFocus
+        Accessible.role: Accessible.CheckBox
         Accessible.name: row.title
+        Accessible.description: row.hint
         Accessible.checkable: true
         Accessible.checked: checked
         onToggled: row.toggled(checked)

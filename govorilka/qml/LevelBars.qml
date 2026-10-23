@@ -9,6 +9,8 @@ Item {
     property string iconName: "mic"
     implicitWidth: 120
     implicitHeight: 46
+    Accessible.role: Accessible.ProgressBar
+    Accessible.name: "Громкость: " + label
     readonly property var profile: [0.45, 0.85, 1.0, 0.7, 0.4]
 
     Row {

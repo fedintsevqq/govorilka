@@ -21,6 +21,7 @@ from govorilka.audio_base import PermissionDeniedError
 from govorilka.config import SOURCE_MARK, SOURCE_MIC, SOURCE_NOTE, SOURCE_SYSTEM, SPEAKER_ME, SPEAKER_OTHERS, Settings
 from govorilka.echo import is_echo
 from govorilka.engines import Engines
+from govorilka.names import suggest_names
 from govorilka.pipeline import LevelCallback, PhraseProcessor, SourcePipeline, TextEvent
 from govorilka.speakers import Diarizer
 from govorilka.transcript import AutoSaver, Transcript, Utterance
@@ -111,7 +112,8 @@ class Session:
         if diarizer is not None:
             self._diarizers[name] = diarizer
         processor = PhraseProcessor(
-            name, speaker, self._engines.recognizer, self._handle_text, diarizer, on_problem=self._notify
+            name, speaker, self._engines.recognizer, self._handle_text, diarizer, on_problem=self._notify,
+            on_relabel=self._relabel,
         )
         canceller = self._canceller
         prepare = None
@@ -241,8 +243,24 @@ class Session:
                 self._on_text(replace(event, kind="discard", text=""))
                 return
             self.transcript.add(utterance)
+            # кто-то представился или к кому-то обратились по имени (только если голоса различаются: иначе
+            # «Собеседник» — это все сразу, и имя одного досталось бы всем)
+            if utterance.source == SOURCE_SYSTEM and SOURCE_SYSTEM in self._diarizers:
+                heard = self._name_from_speech()
+                if heard:
+                    self._notify(f"Узнал по разговору: {', '.join(heard)}. Если ошибся — нажмите на имя в ленте")
             self.saver.save()
         self._on_text(event)
+
+    def _name_from_speech(self) -> list[str]:
+        items, aliases, _user = self.transcript.snapshot()
+        return self.transcript.name_voices(suggest_names(items, {SOURCE_SYSTEM}, aliases))
+
+    def _relabel(self, source: str, labels: dict[float, str]) -> None:
+        """Пересчёт голосов поправил подписи прошлых фраз: правим транскрипт и файл (лента обновится со следующим текстом)."""
+        with self._lock:
+            if self.transcript.relabel(source, labels):
+                self.saver.save()
 
     def _drop_echo(self, utterance: Utterance) -> bool:
         """True — реплика микрофона оказалась эхом колонок и не нужна.

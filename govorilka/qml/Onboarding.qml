@@ -32,12 +32,11 @@ Popup {
                  window: "Окно", stop: "Стоп", pause: "Пауза", mark: "Отметка" }[id] || id
     }
 
-    onPracticeStepChanged: {
-        backend.setTourActive(practiceStep)
-        backend.watchKeys(practiceStep)
-    }
+    // пока знакомство открыто, горячая клавиша только тренирует: ничего не записывает и не останавливает
+    onOpened: { backend.setTourActive(true); primary.forceActiveFocus() }
+    onPracticeStepChanged: backend.watchKeys("tour", practiceStep)
     onClosed: {
-        backend.watchKeys(false)
+        backend.watchKeys("tour", false)
         backend.finishTour()
     }
 
@@ -102,6 +101,7 @@ Popup {
                 implicitHeight: 30
                 implicitWidth: skipText.implicitWidth + 20
                 Accessible.name: "Пропустить знакомство"
+                Tip { text: "Закрыть знакомство (Esc). Открыть снова можно в настройках"; shown: skip.hovered }
                 onClicked: tour.finish()
                 background: Rectangle { radius: 15; color: skip.hovered ? Theme.hover : "transparent"; border.color: skip.visualFocus ? Theme.accent : "transparent" }
                 contentItem: Text { id: skipText; text: "Пропустить"; font.pixelSize: 13; color: Theme.textSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -124,18 +124,21 @@ Popup {
             id: foot
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 24; rightMargin: 24; bottomMargin: 22 }
             spacing: 8
-            PillButton { text: "Назад"; visible: tour.step > 0; onClicked: tour.back() }
+            PillButton { text: "Назад"; tip: "Предыдущий шаг (стрелка влево)"; visible: tour.step > 0; onClicked: tour.back() }
             Item { Layout.fillWidth: true }
             PillButton {
                 visible: tour.step === tour.steps - 1
                 text: "Начать запись"
+                tip: "Закрыть знакомство и сразу начать запись"
                 iconName: "record"
-                onClicked: { tour.finish(); backend.toggleRecording("") }
+                onClicked: { tour.finish(); backend.startRecording("") }
             }
             PillButton {
+                id: primary
                 variant: "primary"
                 text: tour.step === 0 ? "Покажите" : tour.step === tour.steps - 1 ? "Всё понятно" : "Дальше"
                 iconName: tour.step === tour.steps - 1 ? "check" : "chevron"
+                tip: tour.step === tour.steps - 1 ? "Закрыть знакомство. Открыть снова можно в настройках" : "Следующий шаг (стрелка вправо или Enter)"
                 onClicked: tour.next()
             }
         }
@@ -154,7 +157,7 @@ Popup {
         opacity: visible ? 1 : 0
         transform: Translate { y: page.visible || Theme.reduceMotion ? 0 : 8; Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } } }
         Behavior on opacity { NumberAnimation { duration: Theme.slow; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
-        Item { id: artBox; Layout.fillWidth: true; Layout.preferredHeight: 210 }
+        Item { id: artBox; Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 120; Layout.maximumHeight: 210 }
         Text {
             Layout.fillWidth: true
             Layout.topMargin: 14
@@ -175,7 +178,7 @@ Popup {
             lineHeight: 1.35
             color: Theme.textSecondary
         }
-        Item { Layout.fillHeight: true }
+        Item { Layout.preferredHeight: 4 }
     }
 
     // большая клавиша, которая подсвечивается, пока её держат
@@ -311,6 +314,7 @@ Popup {
                 visible: !tour.opts.hotkey_enabled
                 variant: "primary"
                 text: "Включить горячую клавишу"
+                tip: "Включает управление с клавиатуры; изменить комбинацию можно в настройках"
                 iconName: "keyboard"
                 onClicked: backend.setOption("hotkey_enabled", true)
             }

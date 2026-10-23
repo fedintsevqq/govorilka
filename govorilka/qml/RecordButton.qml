@@ -97,7 +97,7 @@ AbstractButton {
 
             Icon {
                 anchors.centerIn: parent
-                name: control.live ? "stop" : control.paused ? "play" : "record"
+                name: control.live || control.paused ? "stop" : "record"   // на паузе кнопка тоже останавливает: значок не врёт
                 size: control.live ? 34 : 38
                 color: control.live ? Theme.fgRecord : control.paused ? Theme.fgPause : Theme.record
                 opacity: control.waiting ? 0.35 : 1
@@ -113,4 +113,5 @@ AbstractButton {
     }
     scale: down ? 0.95 : (hovered ? 1.015 : 1)
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
+    Tip { text: control.live || control.paused ? "Остановить и сохранить запись" : control.waiting ? "Подождите…" : "Начать запись: ваш микрофон и звук компьютера"; shown: control.hovered }
 }

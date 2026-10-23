@@ -521,3 +521,37 @@ def test_forgetting_voices_reports_the_count(backend, qapp, tmp_path, monkeypatc
     assert backend.knownVoices == 1
     backend.forgetVoices()
     assert backend.knownVoices == 0 and toasts[-1] == "Забыл голосов: 1"
+
+
+def test_key_watch_stays_on_while_any_window_needs_it(backend, qapp):
+    backend.watchKeys("settings", True)
+    backend.watchKeys("tour", True)
+    backend.watchKeys("settings", False)
+    assert backend._capture_timer.isActive()  # закрыли настройки — подсветка в знакомстве живёт
+    backend.watchKeys("tour", False)
+    assert not backend._capture_timer.isActive()
+
+
+def test_start_button_never_stops_a_running_recording(backend, qapp):
+    calls = []
+    backend.controller.start_recording = lambda title="": calls.append("start")
+    backend.controller.state = AppState.RECORDING
+    backend.startRecording("")
+    assert calls == []
+    backend.controller.state = AppState.IDLE
+    backend.startRecording("")
+    assert calls == ["start"]
+
+
+def test_pause_and_mark_explain_themselves_when_nothing_is_recorded(backend, qapp):
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append(text))
+    backend.togglePause()
+    backend.addMark()
+    assert len(toasts) == 2 and "во время записи" in toasts[0] and "важный момент" in toasts[1]
+
+
+def test_claude_workdir_can_be_cleared_but_other_texts_keep_their_value():
+    current = Settings(claude_workdir="C:/work", transcripts_dir="C:/t")
+    result = map_to_settings(current, {"claude_workdir": "  ", "transcripts_dir": ""})
+    assert result.claude_workdir == "" and result.transcripts_dir == "C:/t"

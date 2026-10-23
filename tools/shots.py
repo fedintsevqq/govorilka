@@ -57,8 +57,9 @@ def main(out: Path) -> None:
     backend = Backend(lambda l: Controller(l, Settings(theme=sys.argv[2] if len(sys.argv) > 2 else "dark"), hotkeys=_NoHotkeys()))
     engine = create_engine(backend)
     root = engine.rootObjects()[0]
-    root.setWidth(1120)
-    root.setHeight(740)
+    width, height = (int(v) for v in (sys.argv[3] if len(sys.argv) > 3 else "1120x740").split("x"))
+    root.setWidth(width)
+    root.setHeight(height)
     steps = []
 
     def populate(recording: bool) -> None:

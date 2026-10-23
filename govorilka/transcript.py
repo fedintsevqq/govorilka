@@ -58,8 +58,65 @@ class Transcript:
         self._lock = threading.Lock()
 
     def add(self, utterance: Utterance) -> None:
+        """Добавляет реплику. Если говорящего уже назвали, новая реплика сразу приходит с его именем."""
         with self._lock:
+            name = self.aliases.get(utterance.voice_id) if utterance.voice_id else None
+            if name and utterance.speaker != name:
+                utterance = replace(utterance, speaker=name)
             self._items = sorted([*self._items, utterance], key=lambda u: u.start)
+
+    def relabel(self, source: str, labels: dict[float, str]) -> int:
+        """Переподписывает прошлые реплики источника после пересчёта голосов (ключ — время начала реплики).
+
+        Имя едет за человеком: если ярлык, которому дали имя, исчез (его реплики переехали к другому номеру),
+        имя переходит туда, куда ушло больше всего его реплик, — если там своего имени ещё нет.
+        Всё под одной блокировкой: параллельно добавленная реплика другого источника не потеряется."""
+        if not labels:
+            return 0
+        with self._lock:
+            moved: dict[str, dict[str, int]] = {}
+            items, changed = [], 0
+            for u in self._items:
+                new = labels.get(u.start) if u.source == source else None
+                if new is not None and new != u.voice_id:
+                    old = u.voice_id or u.speaker
+                    moved.setdefault(old, {}).setdefault(new, 0)
+                    moved[old][new] += 1
+                    u = replace(u, voice_id=new)
+                    changed += 1
+                items.append(u)
+            present = {u.voice_id for u in items if u.voice_id}
+            for old, targets in moved.items():
+                if old in present or old not in self.aliases:
+                    continue
+                target = max(targets, key=targets.__getitem__)
+                if target not in self.aliases:
+                    self.aliases[target] = self.aliases[old]
+                    if old in self.user_named:
+                        self.user_named.add(target)
+                del self.aliases[old]
+                self.user_named.discard(old)
+            self._items = [
+                replace(u, speaker=self.aliases.get(u.voice_id, u.voice_id)) if u.source == source and u.voice_id else u
+                for u in items
+            ]
+        return changed
+
+    def name_voices(self, names: dict[str, str]) -> list[str]:
+        """Подписывает голоса, у которых имени ещё нет (имена из разговора). Пользовательские имена не трогает.
+        Такие имена не считаются «данными пользователем»: в память голосов они не попадут. Возвращает новые имена."""
+        with self._lock:
+            fresh = {v: n for v, n in names.items() if v not in self.aliases and n.strip()}
+            if not fresh:
+                return []
+            self.aliases.update(fresh)
+            self._items = [replace(u, speaker=fresh[u.voice_id]) if u.voice_id in fresh else u for u in self._items]
+        return list(fresh.values())
+
+    def display_name(self, voice_id: str) -> str:
+        """Как сейчас показывать говорящего: имя, если его дали, иначе сам ярлык."""
+        with self._lock:
+            return self.aliases.get(voice_id, voice_id)
 
     def rename_voice(self, voice_id: str, name: str) -> int:
         """Переименовывает говорящего во всех его репликах. Возвращает, сколько реплик поменялось."""
@@ -68,6 +125,8 @@ class Transcript:
             return 0
         changed = 0
         with self._lock:
+            if not any((u.voice_id or u.speaker) == voice_id for u in self._items):
+                return 0  # такого голоса уже нет (ярлыки переставило уточнение): чужое имя не заводим
             items = []
             for u in self._items:
                 if (u.voice_id or u.speaker) == voice_id and u.speaker != name:

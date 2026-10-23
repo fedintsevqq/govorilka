@@ -94,7 +94,7 @@ Item {
                     hoverEnabled: true
                     focusPolicy: speech.canRename ? Qt.TabFocus : Qt.NoFocus
                     implicitHeight: 24   // цель нажатия не меньше 24 px
-                    implicitWidth: nameText.implicitWidth + 8
+                    implicitWidth: Math.min(nameText.implicitWidth + 8, 280)
                     Accessible.name: speech.canRename ? "Подписать «" + speech.parent.speaker + "» именем" : speech.parent.speaker
                     onClicked: root.renameRequested(speech.parent.voiceId, speech.parent.speaker, speech.tint)
                     background: Rectangle {
@@ -103,6 +103,8 @@ Item {
                     }
                     contentItem: Text {
                         id: nameText
+                        width: nameButton.width
+                        elide: Text.ElideRight
                         text: speech.parent.speaker
                         font.pixelSize: 13
                         font.weight: Font.DemiBold
@@ -112,9 +114,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                     }
                     HoverHandler { cursorShape: speech.canRename ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                    ToolTip.visible: nameButton.hovered && speech.canRename
-                    ToolTip.delay: 600
-                    ToolTip.text: "Нажмите, чтобы подписать именем"
+                    Tip { text: "Подписать именем: оно встанет во все реплики этого человека"; shown: nameButton.hovered && speech.canRename }
                 }
                 Text {
                     text: speech.parent.time
@@ -128,7 +128,7 @@ Item {
                 id: body
                 x: 60
                 y: speech.showHeader ? header.y + header.height + 4 : 2
-                width: speech.width - x - 26
+                width: Math.min(speech.width - x - 26, 900)   // на широком экране строки не тянутся на полтора метра
                 text: speech.parent.text + (speech.partial ? " " : "")
                 readOnly: true
                 selectByMouse: true
@@ -162,18 +162,21 @@ Item {
             readonly property Item row: parent
             width: parent.width
             implicitHeight: 44
+            Accessible.role: Accessible.StaticText
+            Accessible.name: "Отметка " + row.time + ": " + row.text
             Rectangle {
                 x: 58; anchors.verticalCenter: parent.verticalCenter
                 height: 30
-                width: markLabel.implicitWidth + 64
+                width: Math.min(markContent.implicitWidth + 30, markItem.width - 80)
                 radius: 15
                 color: Theme.markSoft
                 border.color: Qt.rgba(Theme.mark.r, Theme.mark.g, Theme.mark.b, 0.35)
                 Row {
+                    id: markContent
                     anchors.centerIn: parent
                     spacing: 8
                     Icon { name: "star"; size: 15; color: Theme.mark; anchors.verticalCenter: parent.verticalCenter }
-                    Text { id: markLabel; text: markItem.row.text; font.pixelSize: 13; font.weight: Font.DemiBold; color: Theme.mark; anchors.verticalCenter: parent.verticalCenter }
+                    Text { id: markLabel; text: markItem.row.text; width: Math.min(implicitWidth, markItem.width - 200); elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: Theme.mark; anchors.verticalCenter: parent.verticalCenter }
                     Text { text: markItem.row.time; font.pixelSize: Theme.fontMeta; color: Theme.textTertiary; anchors.verticalCenter: parent.verticalCenter }
                 }
             }
@@ -191,6 +194,8 @@ Item {
             Text {
                 id: noteText
                 anchors.centerIn: parent
+                width: Math.min(implicitWidth, parent.width - 200)
+                elide: Text.ElideRight
                 text: noteItem.row.text + " · " + noteItem.row.time
                 font.pixelSize: Theme.fontMeta
                 font.letterSpacing: 0.4
@@ -261,6 +266,7 @@ Item {
         visible: opacity > 0
         opacity: !list.follow && list.count > 0 ? 1 : 0
         Accessible.name: "К последней фразе"
+        Tip { text: "Прокрутить вниз и снова следить за новыми фразами"; shown: jump.hovered }
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         onClicked: { list.follow = true; list.positionViewAtEnd() }
         background: Rectangle {

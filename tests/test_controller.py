@@ -224,3 +224,27 @@ def test_a_failing_after_hook_never_leaves_the_app_stuck_in_stopping(app, monkey
     c.stop_recording()
     assert wait_for(lambda: c.state == AppState.IDLE)
     assert wait_for(lambda: events.errors)  # пользователь узнаёт об ошибке, а не видит вечное «Сохраняю…»
+
+
+def test_name_given_after_the_call_reaches_the_file(app, tmp_path):
+    from datetime import datetime
+
+    from govorilka.transcript import Transcript, Utterance
+
+    c, _ = app
+    transcript = Transcript(datetime(2026, 1, 1), "т")
+    transcript.add(Utterance("Собеседник 1", 1.0, "привет", 2.0, "system", "Собеседник 1"))
+    c.transcript, c.last_file = transcript, tmp_path / "call.md"
+    assert c.rename_speaker("Собеседник 1", "Аня") == 1
+    assert "Аня" in c.last_file.read_text(encoding="utf-8")
+
+
+def test_renaming_a_label_that_no_longer_exists_changes_nothing():
+    from datetime import datetime
+
+    from govorilka.transcript import Transcript, Utterance
+
+    transcript = Transcript(datetime(2026, 1, 1), "т")
+    transcript.add(Utterance("Собеседник 1", 1.0, "привет", 2.0, "system", "Собеседник 1"))
+    assert transcript.rename_voice("Собеседник 7", "Аня") == 0
+    assert transcript.aliases == {} and transcript.user_named == set()

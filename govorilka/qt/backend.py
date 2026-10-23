@@ -71,6 +71,9 @@ def settings_to_map(settings: Settings) -> dict[str, object]:
     return data
 
 
+CLEARABLE = {"claude_workdir"}  # пустое значение — осмысленное «по умолчанию» (папка транскриптов)
+
+
 def map_to_settings(current: Settings, data: dict[str, object]) -> Settings:
     """Из словаря QML — в настройки. Неизвестные поля и значения не того типа пропускаем."""
     changes = {}
@@ -83,7 +86,9 @@ def map_to_settings(current: Settings, data: dict[str, object]) -> Settings:
         elif isinstance(default, int):
             changes[field.name] = int(value)  # type: ignore[arg-type]
         elif isinstance(default, str):
-            changes[field.name] = str(value).strip() or default
+            text = str(value).strip()
+            if text or field.name in CLEARABLE:
+                changes[field.name] = text
     return replace(current, **changes)
 
 
@@ -156,6 +161,7 @@ class Backend(QObject):
         self._live_keys = ""
         self._capturing = False
         self._tour_active = False
+        self._key_watchers: set[str] = set()
         self._recorder: ChordRecorder | None = None
         self._capture_deadline = 0.0
         self._keyboard: Keyboard | None = None
@@ -275,11 +281,24 @@ class Backend(QObject):
     @Slot(str)
     @safe_slot
     def toggleRecording(self, title: str = "") -> None:  # noqa: N802
+        if self.controller.state == AppState.STARTING:
+            self.toast.emit("Подождите, запись запускается: при первом запуске загружается модель", "info")
+            return
         self.controller.toggle_recording(title)
+
+    @Slot(str)
+    @safe_slot
+    def startRecording(self, title: str = "") -> None:  # noqa: N802
+        """Только начать (не переключать): кнопка «Начать запись» не должна останавливать уже идущую."""
+        if self.controller.state == AppState.IDLE:
+            self.controller.start_recording(title)
 
     @Slot()
     @safe_slot
     def togglePause(self) -> None:  # noqa: N802
+        if self.controller.session is None:
+            self.toast.emit("Пауза работает во время записи", "info")
+            return
         self.controller.toggle_pause()
 
     @Slot()
@@ -291,7 +310,9 @@ class Backend(QObject):
     @safe_slot
     def addMark(self) -> None:  # noqa: N802
         if not self.controller.add_mark():
-            self.toast.emit("Отметка ставится во время записи", "info")
+            self.toast.emit("Отметка ставится во время записи: она помечает важный момент разговора", "info")
+            return
+        self.toast.emit(f"★ Момент {self._elapsed} отмечен — звёздочка есть в тексте и в файле", "success")
 
     @Slot(str)
     @safe_slot
@@ -459,15 +480,21 @@ class Backend(QObject):
         self._capturing = False
         self.captureChanged.emit()
 
-    @Slot(bool)
+    @Slot(str, bool)
     @safe_slot
-    def watchKeys(self, on: bool) -> None:  # noqa: N802
-        """Пока открыты настройки, показываем, какие клавиши Говорилка видит прямо сейчас."""
+    def watchKeys(self, owner: str, on: bool) -> None:  # noqa: N802
+        """Показываем, какие клавиши Говорилка видит прямо сейчас, пока это нужно хоть одному окну
+        (настройкам, знакомству). Каждое окно включает и выключает только своё: закрытие одного
+        не гасит подсветку в другом."""
         if on:
+            self._key_watchers.add(owner)
             self._capture_timer.start()
-        else:
+            return
+        self._key_watchers.discard(owner)
+        if owner == "settings":
+            self.stopCapture()  # запись новой комбинации живёт только в настройках
+        if not self._key_watchers:
             self._capture_timer.stop()
-            self.stopCapture()
 
     capturedHotkey = Signal(str, str, str)  # noqa: N815 — строка для настроек, подпись, предупреждение
 
@@ -571,8 +598,10 @@ class Backend(QObject):
             self._refresh_timer.start()
 
     def _refresh(self) -> None:
-        utterances = self._transcript.utterances if self._transcript else []
-        self._model.update(utterances, list(self._partials.values()))
+        transcript = self._transcript
+        utterances = transcript.utterances if transcript else []
+        names = transcript.display_name if transcript else (lambda voice: voice)
+        self._model.update(utterances, list(self._partials.values()), names)
 
     def _tick_levels(self) -> None:
         changed = False

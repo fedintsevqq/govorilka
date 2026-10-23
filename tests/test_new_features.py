@@ -76,3 +76,28 @@ def test_partials_get_rarer_on_long_phrases():
     assert after < before / 2
     events = _feed(Segmenter(), tone(3.0))
     assert sum(e.kind == "partial" for e in events) >= 2  # короткие фразы по-прежнему обновляются каждую секунду
+
+
+def test_new_lines_of_a_named_speaker_come_with_the_name():
+    from datetime import datetime
+
+    from govorilka.transcript import Transcript, Utterance
+
+    transcript = Transcript(datetime(2026, 1, 1), "т")
+    transcript.add(Utterance("Собеседник 1", 1.0, "привет", 2.0, "system", "Собеседник 1"))
+    transcript.rename_voice("Собеседник 1", "Аня")
+    transcript.add(Utterance("Собеседник 1", 5.0, "как дела", 6.0, "system", "Собеседник 1"))
+    transcript.add(Utterance("Собеседник 2", 7.0, "норм", 8.0, "system", "Собеседник 2"))
+    assert [u.speaker for u in transcript.utterances] == ["Аня", "Аня", "Собеседник 2"]
+    assert all(u.voice_id for u in transcript.utterances)  # ярлык голоса не теряется: по нему работает уточнение
+    assert transcript.display_name("Собеседник 1") == "Аня"
+    assert transcript.display_name("Собеседник 2") == "Собеседник 2"
+
+
+def test_unfinished_phrase_of_a_named_speaker_shows_the_name():
+    from govorilka.pipeline import TextEvent
+    from govorilka.qt.models import SpeakerColors, build_rows
+
+    partial = TextEvent("system", "Собеседник 1", "partial", "давайте", 3, 4)
+    rows = build_rows([], [partial], SpeakerColors(), {"Собеседник 1": "Аня"}.get)
+    assert rows[0].speaker == "Аня" and rows[0].voice_id == "Собеседник 1"

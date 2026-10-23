@@ -53,8 +53,10 @@ class PhraseProcessor:
         on_text: TextCallback,
         diarizer: Diarizer | None = None,
         on_problem: Callable[[str], None] = lambda _: None,
+        on_relabel: Callable[[str, dict[float, str]], None] = lambda _source, _labels: None,
     ) -> None:
         self.source = source
+        self._on_relabel = on_relabel  # источник, {начало прошлой фразы: новая подпись}
         self.speaker = speaker
         self._recognizer = recognizer
         self._on_text = on_text
@@ -100,7 +102,11 @@ class PhraseProcessor:
         if self._diarizer is None or event.kind != "final":
             return self.speaker
         try:
-            return f"{self.speaker} {self._diarizer.assign(event.audio, key=event.start)}"
+            label = f"{self.speaker} {self._diarizer.assign(event.audio, key=event.start)}"
+            changes = self._diarizer.drain_changes()
+            if changes:  # пересчёт голосов поправил подписи прошлых фраз
+                self._relabel({key: f"{self.speaker} {number}" for key, number in changes.items()})
+            return label
         except Exception:
             # сбой определения голоса не должен стоить текста: оставляем общее имя и говорим об этом один раз
             log.exception("Ошибка определения голоса (%s)", self.speaker)
@@ -108,6 +114,12 @@ class PhraseProcessor:
                 self._diarizer_broken = True
                 self._on_problem("Не получилось определить голоса, текст идёт без разделения собеседников")
             return self.speaker
+
+    def _relabel(self, labels: dict[float, str]) -> None:
+        try:
+            self._on_relabel(self.source, labels)
+        except Exception:
+            log.exception("Не переподписал прошлые фразы (%s)", self.speaker)
 
     def _emit(self, kind: Kind, speaker: str, text: str, start: float, end: float) -> None:
         try:

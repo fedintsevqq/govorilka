@@ -7,10 +7,16 @@ AbstractButton {
     id: control
     property string iconName: ""
     property string variant: "ghost"   // primary / ghost / danger
+    property string tip: ""              // подсказка при наведении: что сделает кнопка
     readonly property bool primary: variant === "primary"
     readonly property bool trailing: primary && iconName !== ""
     implicitHeight: 44
-    implicitWidth: row.implicitWidth + (trailing ? 26 : 32)
+    readonly property bool leadingIcon: iconName !== "" && !trailing
+    readonly property int leftPad: trailing ? 20 : 14
+    readonly property int rightPad: trailing ? 6 : 14
+    readonly property int extras: (leadingIcon ? 18 + 8 : 0) + (trailing ? 10 + 32 : 0)
+    // ширина считается от текста; если раскладка дала меньше, подпись сокращается многоточием, а не вылезает
+    implicitWidth: leftPad + extras + label.implicitWidth + rightPad
     focusPolicy: Qt.TabFocus
     hoverEnabled: true
     Accessible.name: text
@@ -44,8 +50,8 @@ AbstractButton {
             id: row
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
-            anchors.leftMargin: control.trailing ? 20 : 16
-            spacing: 10
+            anchors.leftMargin: control.leftPad
+            spacing: control.trailing ? 10 : 8
             Icon {
                 visible: control.iconName !== "" && !control.trailing
                 anchors.verticalCenter: parent.verticalCenter
@@ -54,7 +60,10 @@ AbstractButton {
                 color: control.variant === "danger" ? Theme.record : Theme.text
             }
             Text {
+                id: label
                 anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, Math.max(0, control.width - control.leftPad - control.extras - control.rightPad))
+                elide: Text.ElideRight
                 text: control.text
                 font.pixelSize: Theme.fontBody
                 font.weight: Font.DemiBold
@@ -80,4 +89,6 @@ AbstractButton {
     }
     scale: down ? 0.97 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
+    // подсказка: своя, а если подпись не влезла — хотя бы полный текст кнопки
+    Tip { text: control.tip !== "" ? control.tip : (label.truncated ? control.text : ""); shown: control.hovered || control.visualFocus }
 }

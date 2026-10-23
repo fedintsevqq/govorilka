@@ -359,11 +359,13 @@ class Controller:
             except Exception:  # память голосов — приятное дополнение: её сбой не должен портить уже уточнённый транскрипт
                 log.exception("Не сохранил память голосов")
                 self.listener.on_error("Не получилось сохранить голоса в память")
-        if result.changed or result.recognized:
+        if result.changed or result.recognized or result.heard:
             self.listener.on_transcript(transcript, self.last_file or Path())  # лента перерисуется с новыми подписями
             note = f"Голоса уточнены: {result.speakers} собеседн."
             if result.recognized:
-                note += f", узнал: {', '.join(result.recognized)}"
+                note += f", узнал по голосу: {', '.join(result.recognized)}"
+            if result.heard:
+                note += f", по разговору: {', '.join(result.heard)}"
             self.listener.on_status(note)
 
     def rename_speaker(self, voice_id: str, name: str) -> int:
@@ -403,12 +405,18 @@ class Controller:
 
     def save_now(self) -> bool:
         """Сохраняет текущий транскрипт. False — не получилось (диск полон, файл занят)."""
-        saved = True
         if self.session:
-            saved = self.session.save() is not None
+            return self.session.save() is not None
         if self.file_job:
-            saved = self.file_job.saver.save() is not None and saved
-        return saved
+            return self.file_job.saver.save() is not None
+        if self.transcript is not None and self.last_file is not None:
+            # созвон уже закончен (например, человека подписали после записи): пишем файл сами
+            try:
+                write_atomic(self.last_file, self.transcript.to_markdown())
+            except OSError:
+                log.exception("Не сохранил транскрипт %s", self.last_file)
+                return False
+        return True
 
     def save_as(self, target: Path) -> str:
         if not self.transcript or not self.transcript.utterances:

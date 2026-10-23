@@ -18,6 +18,9 @@ Popup {
         open()
     }
 
+    // пришёл другой транскрипт или голоса пересчитаны: ярлык мог сменить владельца — не переименовываем вслепую
+    Connections { target: backend; function onTranscriptInfoChanged() { if (sheet.opened) sheet.close() } }
+
     parent: Overlay.overlay
     anchors.centerIn: parent
     width: 400
@@ -57,7 +60,7 @@ Popup {
             ColumnLayout {
                 spacing: 1
                 Text { text: "Кто это?"; font.pixelSize: 17; font.weight: Font.DemiBold; color: Theme.text }
-                Text { text: sheet.voiceId; font.pixelSize: 12; color: Theme.textTertiary }
+                Text { text: sheet.voiceId; Layout.maximumWidth: 280; elide: Text.ElideRight; font.pixelSize: 12; color: Theme.textTertiary }
             }
         }
         Rectangle {
@@ -99,8 +102,8 @@ Popup {
             Layout.rightMargin: 20
             Layout.topMargin: 4
             spacing: 8
-            PillButton { text: "Отмена"; onClicked: sheet.close() }
-            PillButton { variant: "primary"; text: "Подписать"; iconName: "check"; onClicked: sheet.commit() }
+            PillButton { text: "Отмена"; tip: "Закрыть, имя не меняется"; onClicked: sheet.close() }
+            PillButton { variant: "primary"; text: "Подписать"; tip: "Поставить это имя во все реплики этого человека (Enter)"; iconName: "check"; onClicked: sheet.commit() }
         }
         Item { Layout.preferredHeight: 14 }
     }

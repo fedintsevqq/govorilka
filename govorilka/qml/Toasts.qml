@@ -4,7 +4,7 @@ import QtQuick
 // Входят и уходят одной дорогой — снизу.
 Item {
     id: toasts
-    width: 460
+    width: Math.min(460, (parent ? parent.width : 460) - 32)
     height: column.height
 
     function show(message, kind) {
@@ -47,10 +47,13 @@ Item {
                     NumberAnimation { target: toast; property: "opacity"; to: 1; duration: Theme.base; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut }
                     NumberAnimation { target: lift; property: "y"; to: 0; duration: Theme.reduceMotion ? 0 : Theme.slow; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut }
                 }
+                HoverHandler { id: toastHover }
                 Timer {
                     id: life
+                    running: false
                     interval: toast.kind === "error" ? 8000 : 4500
-                    onTriggered: leave.start()
+                    // пока курсор на сообщении, оно не исчезает: можно дочитать
+                    onTriggered: toastHover.hovered ? restart() : leave.start()
                 }
                 SequentialAnimation {
                     id: leave

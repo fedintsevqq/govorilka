@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from itertools import count
 
 import numpy as np
 
@@ -16,7 +18,9 @@ from govorilka import models
 from govorilka.config import SAMPLE_RATE
 
 SAME_SPEAKER = 0.5  # косинусная близость: свой голос 0.6–0.9, чужой 0.3–0.45
-MIN_EMBED_S = 1.0  # по более короткой фразе отпечаток ненадёжен
+MIN_EMBED_S = 1.0  # фраза короче — отпечаток ненадёжен: в кластеры голосов не входит
+MIN_SHORT_S = 0.6  # «да», «угу» короче этого вовсе не сравниваем: отпечаток из шума
+SHORT_SAME = 0.50  # короткая фраза относится к голосу, если похожа на него хотя бы так (иначе — тот же, что был)
 MAX_SPEAKERS = 12
 
 
@@ -60,22 +64,72 @@ class Sample:
 
 @dataclass
 class Diarizer:
-    """Раздаёт номера голосам по мере их появления: 1, 2, 3…, а заодно копит отпечатки для уточнения после созвона."""
+    """Подписывает голоса по ходу записи: 1, 2, 3… и копит отпечатки для уточнения после созвона.
+
+    Каждую новую фразу не сравнивают «по очереди» с уже известными голосами (так первые фразы, на которых голос ещё
+    не выучен, плодят лишних собеседников), а заново группируют все фразы сразу, как после созвона. Номера при этом
+    держатся стабильными: группа получает номер, который больше всего её фраз уже носили. Если пересчёт поменял
+    подпись у прошлых фраз, это видно в drain_changes() — транскрипт их переподпишет.
+    """
 
     embed: Callable[[np.ndarray], np.ndarray]
     threshold: float = SAME_SPEAKER
-    voices: list[_Voice] = field(default_factory=list)
+    voices: list[_Voice] = field(default_factory=list)  # для фраз без ключа (без истории): прежнее сравнение по очереди
     last: int = 1
     history: list[Sample] = field(default_factory=list)
+    short: list[Sample] = field(default_factory=list)  # короткие фразы: подписаны по ближайшему голосу, в группы не входят
+    _centroids: dict[int, np.ndarray] = field(default_factory=dict)
+    _changes: dict[float, int] = field(default_factory=dict)
 
     def assign(self, audio: np.ndarray, key: float | None = None) -> int:
-        if len(audio) < MIN_EMBED_S * SAMPLE_RATE:
+        seconds = len(audio) / SAMPLE_RATE
+        if seconds < MIN_SHORT_S or (key is None and seconds < MIN_EMBED_S):
             return self.last  # короткое «да», «угу» — скорее всего, тот же человек
         vector = self.embed(audio)
-        label = self._label_for(vector)
-        if key is not None:
-            self.history.append(Sample(key, vector, len(audio) / SAMPLE_RATE, label))
+        if key is None:
+            self.last = self._label_for(vector)
+            return self.last
+        if seconds < MIN_EMBED_S:
+            label = self._nearest(vector) or self.last
+            self.short.append(Sample(key, vector, seconds, label))
+        else:
+            self.history.append(Sample(key, vector, seconds, 0))
+            self._regroup()
+            label = self.history[-1].label
+        self.last = label
         return label
+
+    def drain_changes(self) -> dict[float, int]:
+        """Прошлые фразы, чья подпись поменялась после пересчёта: ключ фразы -> новый номер."""
+        changes, self._changes = self._changes, {}
+        return changes
+
+    def _regroup(self) -> None:
+        vectors = [s.vector for s in self.history]
+        clusters = cluster_samples(vectors, [s.seconds for s in self.history])
+        numbers = stable_numbers(clusters, [s.label for s in self.history])
+        regrouped = []
+        for sample, number in zip(self.history, numbers):
+            if sample.label and sample.label != number:
+                self._changes[sample.key] = number
+            regrouped.append(replace(sample, label=number) if sample.label != number else sample)
+        self.history = regrouped
+        self._centroids = cluster_centroids(vectors, [s.seconds for s in regrouped], numbers)
+        shorts = []
+        for sample in self.short:  # короткие фразы идут за своим голосом, если он переехал
+            number = self._nearest(sample.vector) or sample.label
+            if number != sample.label:
+                self._changes[sample.key] = number
+                sample = replace(sample, label=number)
+            shorts.append(sample)
+        self.short = shorts
+
+    def _nearest(self, vector: np.ndarray) -> int | None:
+        if not self._centroids:
+            return None
+        scores = {number: float(vector @ centroid) for number, centroid in self._centroids.items()}
+        best = max(scores, key=scores.__getitem__)
+        return best if scores[best] >= SHORT_SAME else None
 
     def _label_for(self, vector: np.ndarray) -> int:
         if self.voices:
@@ -84,18 +138,35 @@ class Diarizer:
             if scores[best] >= self.threshold or len(self.voices) >= MAX_SPEAKERS:
                 voice = self.voices[best]
                 self.voices[best] = _Voice(voice.total + vector, voice.count + 1)
-                self.last = best + 1
-                return self.last
+                return best + 1
         self.voices.append(_Voice(vector))
-        self.last = len(self.voices)
-        return self.last
+        return len(self.voices)
+
+
+def stable_numbers(clusters: list[int], previous: list[int]) -> list[int]:
+    """Номера групп для показа. Группа получает номер, который носило больше всего её фраз: «Собеседник 2» остаётся
+    «Собеседником 2», даже если пересчёт перетасовал группы. Новой группе — наименьший свободный номер с 1."""
+    overlap = Counter((c, p) for c, p in zip(clusters, previous) if p >= 1)
+    numbers: dict[int, int] = {}
+    used: set[int] = set()
+    for (cluster, number), _count in sorted(overlap.items(), key=lambda kv: (-kv[1], kv[0][1], kv[0][0])):
+        if cluster in numbers or number in used:
+            continue
+        numbers[cluster] = number
+        used.add(number)
+    for cluster in dict.fromkeys(clusters):  # по порядку первого появления
+        if cluster not in numbers:
+            free = next(n for n in count(1) if n not in used)
+            numbers[cluster] = free
+            used.add(free)
+    return [numbers[c] for c in clusters]
 
 
 # ---------- уточнение после созвона ----------
 
-OFFLINE_SAME = 0.48  # близость голосов при кластеризации по всем фразам сразу (по ходу записи — 0.5)
-TINY_SECONDS = 3.0  # кластер короче — скорее всего, осколок чужого голоса, а не новый человек
-TINY_MERGE = 0.36  # осколок сливаем с ближайшим голосом, если они хотя бы так похожи
+OFFLINE_SAME = 0.50  # близость голосов при группировке всех фраз сразу (подобрано на стенде tools/diar_bench.py)
+TINY_SECONDS = 3.0  # группа короче — скорее всего, осколок чужого голоса, а не новый человек
+TINY_MERGE = 0.47  # осколок сливаем с ближайшим голосом, если он заметно похож (разные люди дают около 0.43)
 
 
 def cluster_samples(vectors: list[np.ndarray], seconds: list[float], threshold: float = OFFLINE_SAME) -> list[int]:

@@ -431,3 +431,68 @@ def test_real_voices_known_person_is_recognized_in_the_next_call(engines, tmp_pa
     assert result.recognized == ["Ирина"]
     assert any(u.speaker == "Ирина" and "коллеги" in u.text.lower() for u in second.transcript.utterances)
     assert any(u.speaker.startswith("Спикер") for u in second.transcript.utterances)  # вторая — незнакомая, осталась по номеру
+
+
+# ---------- пересчёт голосов по ходу записи ----------
+
+
+def test_stable_numbers_keep_the_number_people_already_saw():
+    from govorilka.speakers import stable_numbers
+
+    # пересчёт перенумеровал группы (0 и 1 поменялись местами), а люди видели «2» и «1»
+    assert stable_numbers([0, 0, 1, 1, 2], [2, 2, 1, 1, 0]) == [2, 2, 1, 1, 3]
+    # группы слились: номер достаётся тому, у кого больше фраз
+    assert stable_numbers([0, 0, 0], [1, 1, 2]) == [1, 1, 1]
+    # первые фразы: номера с 1 по порядку появления
+    assert stable_numbers([1, 0, 1], [0, 0, 0]) == [1, 2, 1]
+
+
+def test_live_regrouping_fixes_a_person_who_first_looked_new():
+    a, b = base_voices(2)
+    # первая фраза Ани вышла «странной» (похожа на неё лишь отчасти): по очереди она стала бы отдельным человеком
+    vectors = iter([partly_like(a, 1.1), noisy(a), noisy(b), noisy(a), noisy(b), noisy(a)])
+    diarizer = Diarizer(embed=lambda audio: next(vectors))
+    long = np.zeros(SR * 3, np.float32)
+    labels = [diarizer.assign(long, key=float(i)) for i in range(6)]
+    final = {s.key: s.label for s in diarizer.history}
+    assert len(set(final.values())) == 2  # в итоге двое, а не трое
+    assert final[0.0] == final[1.0] == final[3.0] == final[5.0] != final[2.0] == final[4.0]
+    assert labels[-1] == final[5.0]
+
+
+def test_relabel_moves_lines_and_the_name_follows_the_person():
+    transcript = Transcript(datetime(2026, 1, 1), "т")
+    transcript.add(Utterance("Собеседник 2", 1.0, "привет", 2.0, "system", "Собеседник 2"))
+    transcript.add(Utterance("Я", 1.5, "здравствуйте", 2.0, "mic", "Я"))
+    transcript.add(Utterance("Собеседник 1", 3.0, "это я, Аня", 4.0, "system", "Собеседник 1"))
+    transcript.rename_voice("Собеседник 2", "Аня")
+    # пересчёт понял: фраза в 1.0 — тот же человек, что и в 3.0
+    assert transcript.relabel("system", {1.0: "Собеседник 1"}) == 1
+    speakers = [(u.speaker, u.voice_id) for u in transcript.utterances]
+    assert speakers == [("Аня", "Собеседник 1"), ("Я", "Я"), ("Аня", "Собеседник 1")]
+    assert transcript.aliases == {"Собеседник 1": "Аня"} and transcript.user_named == {"Собеседник 1"}
+
+
+def test_phrase_processor_passes_regrouped_labels_to_the_transcript():
+    from govorilka.pipeline import PhraseProcessor
+    from govorilka.segmenter import SegmentEvent
+
+    class Recognizer:
+        def transcribe(self, audio, skip_if_busy=False):
+            return "текст"
+
+    class Regrouping:
+        def assign(self, audio, key=None):
+            return 1
+
+        def drain_changes(self):
+            return {0.0: 1, 2.0: 3}
+
+    relabels, texts = [], []
+    processor = PhraseProcessor(
+        "system", "Собеседник", Recognizer(), texts.append, Regrouping(),
+        on_relabel=lambda source, labels: relabels.append((source, labels)),
+    )
+    processor.handle(SegmentEvent("final", np.zeros(SR * 3, np.float32), 5.0))
+    assert relabels == [("system", {0.0: "Собеседник 1", 2.0: "Собеседник 3"})]
+    assert texts[0].speaker == "Собеседник 1"

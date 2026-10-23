@@ -18,6 +18,7 @@ Window {
     transientParent: null
 
     property var draft: ({})
+    property var original: ({})   // как было при открытии: сохраняем только то, что поменяли здесь
     property bool autostart: false
     property string hotkeyLabel: ""
     property string hotkeyWarning: ""
@@ -25,6 +26,7 @@ Window {
 
     function open() {
         draft = JSON.parse(JSON.stringify(backend.settings))
+        original = JSON.parse(JSON.stringify(backend.settings))
         autostart = backend.autostart
         hotkeyLabel = draft.hotkeyLabel
         hotkeyWarning = ""
@@ -37,11 +39,11 @@ Window {
         show()
         raise()
         requestActivate()
-        backend.watchKeys(true)
+        backend.watchKeys("settings", true)
     }
     function setValue(name, value) { draft[name] = value; draftChanged() }
-    onClosing: backend.watchKeys(false)
-    onVisibleChanged: if (!visible) backend.watchKeys(false)
+    onClosing: backend.watchKeys("settings", false)
+    onVisibleChanged: if (!visible) backend.watchKeys("settings", false)
 
     Backdrop { anchors.fill: parent }
 
@@ -98,6 +100,8 @@ Window {
         }
         contentItem: Text {
             leftPadding: 14
+            rightPadding: 40   // не заезжать под стрелку
+            elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
             text: combo.displayText
             font: combo.font
@@ -149,8 +153,9 @@ Window {
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
         ColumnLayout {
-            width: scroll.availableWidth - 32
-            x: 16
+            // на большом экране колонка не растягивается во всю ширину: строки остаются читаемыми
+            width: Math.min(scroll.availableWidth - 32, 760)
+            x: Math.max(16, (scroll.availableWidth - width) / 2)
             spacing: 14
 
             Item { Layout.preferredHeight: 4 }
@@ -185,6 +190,7 @@ Window {
                     }
                     PillButton {
                         text: backend.capturing ? "Отмена" : "Изменить…"
+                        tip: backend.capturing ? "Оставить прежнюю комбинацию" : "Задать новую комбинацию: нажмите нужные клавиши и отпустите"
                         implicitHeight: 44
                         onClicked: backend.capturing ? backend.stopCapture() : backend.startCapture()
                     }
@@ -240,7 +246,7 @@ Window {
                     Layout.fillWidth: true
                     visible: backend.knownVoices > 0
                     Text { text: "В памяти голосов: " + backend.knownVoices; font.pixelSize: 13; color: Theme.textSecondary; Layout.fillWidth: true }
-                    PillButton { text: "Забыть всех"; variant: "danger"; implicitHeight: 36; onClicked: backend.forgetVoices() }
+                    PillButton { text: "Забыть всех"; tip: "Стереть все запомненные голоса с этого компьютера"; variant: "danger"; implicitHeight: 36; onClicked: backend.forgetVoices() }
                 }
             }
 
@@ -296,22 +302,33 @@ Window {
         RowLayout {
             anchors { fill: parent; leftMargin: 24; rightMargin: 24 }
             spacing: 10
-            PillButton { text: "Как пользоваться"; iconName: "bolt"; onClicked: { win.close(); win.tourRequested() } }
+            PillButton { text: "Как пользоваться"; tip: "Снова показать знакомство с тренировкой горячей клавиши"; iconName: "bolt"; onClicked: { win.close(); win.tourRequested() } }
             Item { Layout.fillWidth: true }
-            PillButton { text: "Отмена"; onClicked: win.close() }
+            PillButton { text: "Отмена"; tip: "Закрыть без изменений (Esc)"; onClicked: win.close() }
             PillButton {
                 variant: "primary"
                 text: "Сохранить"
+                tip: "Применить все настройки сразу"
                 iconName: "check"
                 onClicked: {
                     win.draft.transcripts_dir = folderField.text
                     win.draft.claude_workdir = claudeField.text
                     win.draft.claude_prompt = promptField.text
-                    backend.applySettings(win.draft, win.autostart)
+                    // только изменённое: тумблеры главного окна и знакомство могли поменять настройки,
+                    // пока это окно было открыто, и старая копия не должна их откатить
+                    const changed = {}
+                    for (const key in win.draft)
+                        if (JSON.stringify(win.draft[key]) !== JSON.stringify(win.original[key])) changed[key] = win.draft[key]
+                    backend.applySettings(changed, win.autostart)
                     win.close()
                 }
             }
         }
     }
-    Shortcut { sequences: ["Escape"]; onActivated: win.close() }
+    // Esc в открытом списке закрывает только список, а не всё окно
+    Shortcut {
+        sequences: ["Escape"]
+        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible
+        onActivated: win.close()
+    }
 }

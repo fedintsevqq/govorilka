@@ -239,7 +239,11 @@ Window {
                 spacing: 1
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: menu.hovered >= 0 ? (menu.actions[menu.hovered].disabled ? menu.actions[menu.hovered].label + " — нет записи" : menu.actions[menu.hovered].label)
+                    width: 80   // центр меню маленький: длинная подпись переносится, а не вылезает на кольцо
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: menu.hovered >= 0 ? (menu.actions[menu.hovered].disabled ? menu.actions[menu.hovered].label + "
+нет записи" : menu.actions[menu.hovered].label)
                         : menu.practice ? "Тренировка" : menu.live ? (menu.phase === "paused" ? "Пауза" : "Запись") : "Говорилка"
                     font.pixelSize: menu.hovered >= 0 ? 13 : 12
                     font.weight: Font.DemiBold

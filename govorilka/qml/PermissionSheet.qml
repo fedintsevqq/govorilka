@@ -66,11 +66,12 @@ Popup {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 6
             spacing: 10
-            PillButton { text: "Позже"; onClicked: sheet.close() }
+            PillButton { text: "Позже"; tip: "Закрыть. Без разрешения эта часть не заработает"; onClicked: sheet.close() }
             PillButton {
                 visible: sheet.canReset
                 variant: "primary"
                 text: "Сбросить и закрыть"
+                tip: "Сбросить решение macOS о доступе и закрыть Говорилку. При следующем запуске система спросит снова"
                 iconName: "power"
                 onClicked: { sheet.close(); backend.resetPermission(sheet.service) }
             }

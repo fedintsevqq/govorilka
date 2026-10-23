@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QAbstractListModel, QByteArray, QModelIndex, QObject, Qt, Signal
@@ -63,7 +64,13 @@ class SpeakerColors:
         self._order.clear()
 
 
-def build_rows(utterances: list[Utterance], partials: list[TextEvent], colors: SpeakerColors) -> list[Row]:
+def build_rows(
+    utterances: list[Utterance],
+    partials: list[TextEvent],
+    colors: SpeakerColors,
+    names: Callable[[str], str] = lambda voice: voice,
+) -> list[Row]:
+    """names — как показывать ярлык голоса недосказанной фразы (имя, если человека уже подписали)."""
     rows: list[Row] = []
     previous_speaker: str | None = None
     for u in utterances:
@@ -85,7 +92,7 @@ def build_rows(utterances: list[Utterance], partials: list[TextEvent], colors: S
             Row(
                 "partial",
                 format_offset(event.start),
-                event.speaker,
+                names(event.speaker),
                 event.text,
                 colors.index(event.speaker, event.source),
                 True,
@@ -139,8 +146,10 @@ class TranscriptModel(QAbstractListModel):
         self.endResetModel()
         self.countChanged.emit()
 
-    def update(self, utterances: list[Utterance], partials: list[TextEvent]) -> None:
-        new = build_rows(utterances, partials, self._colors)
+    def update(
+        self, utterances: list[Utterance], partials: list[TextEvent], names: Callable[[str], str] = lambda v: v
+    ) -> None:
+        new = build_rows(utterances, partials, self._colors, names)
         keep = common_prefix(self._rows, new)
         if keep < len(self._rows):
             self.beginRemoveRows(QModelIndex(), keep, len(self._rows) - 1)
