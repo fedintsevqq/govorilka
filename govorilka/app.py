@@ -14,11 +14,14 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from govorilka import autostart, single_instance
 from govorilka.audio import AudioError
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.config import DATA_DIR, FROZEN, SOURCE_MIC, SOURCE_SYSTEM, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
 from govorilka.filejob import CANCELLED, FILE_DIALOG_TYPES, FileJob
+from govorilka.hotkeys import HotkeyWatcher, format_chord, parse_chord
+from govorilka.indicator import NEUTRAL, OK, RECORDING, RecordingIndicator
 from govorilka.pipeline import TextEvent
 from govorilka.recognizer import RecognizerError
 from govorilka.session import Session
@@ -29,6 +32,7 @@ from govorilka.transcript_view import IS_MAC, ME_COLOR, OTHER_COLORS, Transcript
 log = logging.getLogger(__name__)
 
 POLL_MS = 80
+BACKGROUND_FLAG = "--background"
 LEVEL_DECAY = 0.85
 METERS = {SOURCE_MIC: ("Я", ME_COLOR), SOURCE_SYSTEM: ("Собеседники", OTHER_COLORS[0])}
 
@@ -47,6 +51,14 @@ class App:
         self.levels = {source: 0.0 for source in METERS}
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.started_at = 0.0
+        self._starting = False  # запись запускается: модели грузятся или открываются устройства
+        self.indicator = RecordingIndicator(root)
+        self.hotkeys = HotkeyWatcher(
+            on_trigger=lambda: self.events.put(("hotkey", None)),
+            on_error=lambda message: self.events.put(("status", message)),
+        )
+        self._apply_hotkey()
+        self.hotkeys.start()
 
         root.title("Говорилка — транскрибация созвонов")
         root.geometry("980x660")
@@ -141,6 +153,7 @@ class App:
         if self.file_job:
             return
         self._read_toggles()
+        self._starting = True
         self.start_btn.configure(state="disabled")
         self.file_btn.configure(state="disabled")
         threading.Thread(target=self._start_worker, daemon=True).start()
@@ -228,7 +241,10 @@ class App:
                 self._render()
             self._update_meters()
             if self.session:
-                self.timer_var.set(format_offset(time.monotonic() - self.started_at))
+                elapsed = format_offset(time.monotonic() - self.started_at)
+                self.timer_var.set(elapsed)
+                if self.settings.show_indicator:
+                    self.indicator.update_text(f"Запись {elapsed}")
         except Exception:  # окно должно жить дальше, даже если одно событие сломалось
             log.exception("Ошибка обновления окна")
         finally:
@@ -249,20 +265,34 @@ class App:
             return False
         if kind == "status":
             self.status_var.set(str(payload))
+            if self._starting and self.settings.show_indicator:
+                self.indicator.show(str(payload), NEUTRAL)  # тихий запуск: окна нет, прогресс виден на плашке
+        elif kind == "hotkey":
+            self.hotkey_toggle()
+        elif kind == "show":
+            self.show_window()
         elif kind == "error":
+            self._starting = False
+            self.indicator.hide()
             self._set_idle()
             self.status_var.set(str(payload))
-            messagebox.showerror("Говорилка", str(payload))
+            self._alert("error", str(payload))
         elif kind == "started":
+            self._starting = False
             self.session = payload  # type: ignore[assignment]
             self._show_transcript(self.session.transcript, self.session.path)
             self.started_at = time.monotonic()
             self.start_btn.configure(text="■ Остановить", state="normal")
             self.status_var.set(f"Идёт запись. Автосохранение: {self.session.path}")
+            if self.settings.show_indicator:
+                self.indicator.show("Запись 00:00", RECORDING)
             return True
         elif kind == "stopped":
             self._set_idle()
             self.status_var.set(f"Запись остановлена. Сохранено: {payload}")
+            if self.settings.show_indicator:
+                name = Path(str(payload)).name if payload else "не удалось сохранить"
+                self.indicator.show(f"Сохранено: {name}", OK, ttl_ms=4000)
             return True
         elif kind == "file_started":
             self.file_job = payload  # type: ignore[assignment]
@@ -283,7 +313,7 @@ class App:
             self.progress.pack_forget()
             self._set_idle()
             if saved is None and error != CANCELLED:
-                messagebox.showerror("Говорилка", error or "Не получилось расшифровать файл")
+                self._alert("error", error or "Не получилось расшифровать файл")
                 self.status_var.set(error or "Не получилось расшифровать файл")
             elif saved is None:
                 self.status_var.set("Расшифровка отменена")
@@ -292,6 +322,11 @@ class App:
                 self.status_var.set(f"{note}. Сохранено: {saved}")
             return True
         return False
+
+    def _alert(self, level: str, message: str) -> None:
+        """Диалог модальный и крутит свой цикл, поэтому показываем его не из _poll, иначе метры и текст замерзают."""
+        show = messagebox.showerror if level == "error" else messagebox.showwarning
+        self.root.after_idle(lambda: show("Говорилка", message))
 
     def _set_idle(self) -> None:
         self.partials.clear()
@@ -354,10 +389,18 @@ class App:
             os.startfile(folder)  # noqa: S606 — открываем папку в проводнике
 
     def send_to_claude(self) -> None:
+        saved = True
         if self.session:
-            self.session.save()
+            saved = self.session.save() is not None
         if self.file_job:
-            self.file_job.saver.save()
+            saved = self.file_job.saver.save() is not None and saved
+        if not saved:
+            messagebox.showerror(
+                "Говорилка",
+                "Не получилось сохранить свежий транскрипт, Claude увидел бы старую версию. "
+                "Освободите место на диске или смените папку в настройках.",
+            )
+            return
         if not self.last_file or not self.last_file.exists():
             messagebox.showinfo("Говорилка", "Сначала запишите созвон или расшифруйте файл — отправлять пока нечего.")
             return
@@ -374,15 +417,53 @@ class App:
             return
         self.status_var.set(f"Открыл Claude Code с файлом {self.last_file.name}")
 
-    def open_settings(self) -> None:
-        SettingsDialog(self.root, self.settings, self._apply_settings)
+    # ---------- горячая клавиша, фон ----------
 
-    def _apply_settings(self, settings: Settings) -> None:
+    def _apply_hotkey(self) -> None:
+        """Передаёт наблюдателю актуальную комбинацию (или выключает её)."""
+        if not self.settings.hotkey_enabled:
+            self.hotkeys.set_chord(None)
+            return
+        try:
+            self.hotkeys.set_chord(parse_chord(self.settings.hotkey))
+        except ValueError as exc:
+            self.hotkeys.set_chord(None)
+            self.status_var.set(f"Горячая клавиша не включена: {exc}")
+
+    def hotkey_toggle(self) -> None:
+        """Старт или стоп записи по горячей клавише. Пока идёт запуск, остановка или расшифровка файла, игнорируем."""
+        stopping = self.stopping is not None and self.stopping.is_alive()
+        if self.file_job or self._starting or stopping:
+            return
+        self.toggle_recording()
+
+    def show_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def open_settings(self) -> None:
+        SettingsDialog(self.root, self.settings, autostart.is_enabled(), self._apply_settings)
+
+    def _apply_settings(self, settings: Settings, autostart_on: bool) -> None:
         self.settings = settings
         save_settings(settings)
-        self.status_var.set("Настройки сохранены")
+        self._apply_hotkey()
+        if not settings.show_indicator:
+            self.indicator.hide()
+        message = "Настройки сохранены"
+        if settings.hotkey_enabled:
+            message += f". Горячая клавиша: {format_chord(parse_chord(settings.hotkey))}"
+        try:
+            if autostart_on != autostart.is_enabled():
+                autostart.set_enabled(autostart_on)
+        except OSError as exc:
+            log.exception("Не удалось изменить автозапуск")
+            self._alert("error", f"Не получилось изменить автозапуск: {exc}")
+        self.status_var.set(message)
 
     def on_close(self) -> None:
+        self.hotkeys.stop()
         self.status_var.set("Сохраняю запись…")
         self.root.update_idletasks()
         try:
@@ -401,13 +482,13 @@ class App:
 
 def main() -> None:
     log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    # у оконного .exe и у pythonw нет stdout/stderr, а прогресс-бар скачивания модели пишет в stderr
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
     if FROZEN:
-        # у оконного .exe нет stdout/stderr, а прогресс-бар скачивания модели пишет в stderr
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-        if sys.stdout is None:
-            sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
-        if sys.stderr is None:
-            sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
         # у собранного приложения нет консоли — пишем лог в файл, чтобы было что прислать при сбое
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(level=logging.INFO, format=log_format, filename=DATA_DIR / "govorilka.log", encoding="utf-8")
@@ -417,13 +498,30 @@ def main() -> None:
         from govorilka.selftest import run
 
         sys.exit(run(Path(sys.argv[2])))
+    background = BACKGROUND_FLAG in sys.argv
+    # Сначала занимаем «единственное место»: вторая копия не должна даже открывать окно и читать клавиши.
+    # Просьба «покажись» от второго запуска попадает в очередь окна, когда оно уже создано.
+    shown: list[App] = []
+    lock = single_instance.acquire(
+        lambda: shown[0].events.put(("show", None)) if shown else None, notify_existing=not background
+    )
+    if lock is None:
+        return
     root = tk.Tk()
     try:
         ttk.Style(root).theme_use("aqua" if IS_MAC else "vista")
     except tk.TclError:
         pass
-    App(root)
-    root.mainloop()
+    app = App(root)
+    shown.append(app)
+    if IS_MAC:
+        root.createcommand("::tk::mac::ReopenApplication", app.show_window)  # клик по значку в Dock
+    if background:
+        root.iconify()  # автозапуск: окно не выскакивает, работает горячая клавиша
+    try:
+        root.mainloop()
+    finally:
+        lock.close()
 
 
 if __name__ == "__main__":

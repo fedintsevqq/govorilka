@@ -13,6 +13,7 @@ from govorilka.transcript import Utterance
 
 TIME_MARGIN_S = 1.5
 CONTAINMENT_THRESHOLD = 0.7
+MIN_WORDS = 3  # «да», «ок», «понял» могли быть настоящим ответом, а не эхом: короткие фразы не трогаем
 
 _WORD = re.compile(r"[\wё]+", re.IGNORECASE)
 
@@ -27,7 +28,7 @@ def _overlaps(a: Utterance, b: Utterance) -> bool:
 
 def is_echo(mic: Utterance, others: Iterable[Utterance]) -> bool:
     mic_words = words(mic.text)
-    if not mic_words:
+    if len(mic_words) < MIN_WORDS:
         return False
     nearby: set[str] = set()
     for other in others:

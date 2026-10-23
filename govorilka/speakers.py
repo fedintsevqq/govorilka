@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -51,7 +52,7 @@ class _Voice:
 class Diarizer:
     """Раздаёт номера голосам по мере их появления: 1, 2, 3…"""
 
-    embed: object  # Callable[[np.ndarray], np.ndarray]; так проще подменить в тестах
+    embed: Callable[[np.ndarray], np.ndarray]
     threshold: float = SAME_SPEAKER
     voices: list[_Voice] = field(default_factory=list)
     last: int = 1
@@ -59,7 +60,7 @@ class Diarizer:
     def assign(self, audio: np.ndarray) -> int:
         if len(audio) < MIN_EMBED_S * SAMPLE_RATE:
             return self.last  # короткое «да», «угу» — скорее всего, тот же человек
-        vector = self.embed(audio)  # type: ignore[operator]
+        vector = self.embed(audio)
         if self.voices:
             scores = [float(vector @ v.centroid) for v in self.voices]
             best = int(np.argmax(scores))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import os
 import shlex
 import shutil
 import subprocess
@@ -40,7 +39,7 @@ def _npm_shim_is_alive(shim: Path) -> bool:
 def find_claude() -> Path | None:
     if IS_MAC:
         return _find_claude_mac()
-    native = Path(os.environ.get("USERPROFILE", "")) / ".local" / "bin" / "claude.exe"
+    native = Path.home() / ".local" / "bin" / "claude.exe"
     if native.is_file():
         return native
     for name in ("claude.exe", "claude.cmd", "claude.ps1", "claude"):
@@ -105,7 +104,13 @@ def open_in_claude(transcript_file: Path, workdir: Path, prompt: str) -> None:
     workdir.mkdir(parents=True, exist_ok=True)
     if IS_MAC:
         script = build_applescript(build_shell_command(claude, workdir, prompt))
-        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=30)
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30
+            )
+        except subprocess.TimeoutExpired as exc:
+            # первый запуск: macOS спрашивает, можно ли Говорилке управлять Терминалом, и ждёт ответа
+            raise OSError("Терминал не ответил за 30 секунд. Разрешите Говорилке управлять Терминалом и повторите.") from exc
         if result.returncode != 0:
             raise OSError(f"Terminal не открылся: {result.stderr.strip()}")
         return

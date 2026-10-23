@@ -49,8 +49,10 @@ def test_decode_audio_from_mp3_and_mp4(tmp_path, name, codec, video):
     source = _read_wav("speech_ru.wav")
     path = tmp_path / name
     _encode(path, source, codec, video)
-    duration, chunks = decode_audio(path)
-    decoded = np.concatenate([c.samples for c in chunks])
+    audio = decode_audio(path)
+    duration = audio.duration
+    decoded = np.concatenate([c.samples for c in audio.chunks])
+    audio.close()
     assert decoded.dtype == np.float32
     assert abs(len(decoded) / 16_000 - len(source) / 16_000) < 0.2  # длина сохраняется
     assert abs(duration - len(source) / 16_000) < 0.5

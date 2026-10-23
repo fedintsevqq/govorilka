@@ -26,6 +26,7 @@ from govorilka.transcript import AutoSaver, Transcript, Utterance
 log = logging.getLogger(__name__)
 
 WATCH_EVERY_S = 2.0
+QUEUE_WARN_AT = 400  # из 600 кусков по 0.1 с, то есть примерно 40 секунд отставания
 RETRY_AFTER_S = 10.0  # как часто пробовать вернуть упавшее устройство, если выбор в системе не менялся
 
 
@@ -50,12 +51,12 @@ class Session:
         if not (settings.capture_mic or settings.capture_system):
             raise AudioError("Включите хотя бы один источник: микрофон или звук компьютера")
         self.transcript = Transcript(datetime.now(), title)
-        self.saver = AutoSaver(self.transcript, settings.transcripts_path)
         self._settings = settings
         self._engines = engines
         self._on_text = on_text
         self._on_level = on_level
         self._on_notice = on_notice
+        self.saver = AutoSaver(self.transcript, settings.transcripts_path, self._on_save_state)
         self._audio: AudioSystem | None = AudioSystem()
         self._sources: list[_Source] = []
         self._signature = AudioSystem.default_signature()
@@ -91,7 +92,9 @@ class Session:
 
     def _add_source(self, name: str, speaker: str, find_device: str, t0: float, diarize: bool) -> None:
         diarizer = Diarizer(self._engines.speakers.embed) if diarize else None
-        processor = PhraseProcessor(name, speaker, self._engines.recognizer, self._handle_text, diarizer)
+        processor = PhraseProcessor(
+            name, speaker, self._engines.recognizer, self._handle_text, diarizer, on_problem=self._notify
+        )
         pipeline = SourcePipeline(processor, self._engines.vad.detector(), t0, self._on_level)
         pipeline.start()
         self._sources.append(_Source(name, find_device, pipeline))
@@ -125,7 +128,19 @@ class Session:
             except Exception:  # сторож не должен умирать — без него запись не переживёт смену наушников
                 log.exception("Ошибка проверки устройств")
 
+    def _on_save_state(self, error: str | None) -> None:
+        if error:
+            self._notify(f"Не могу сохранить транскрипт ({error}). Освободите место или смените папку в настройках.")
+        else:
+            self._notify("Сохранение транскрипта снова работает")
+
+    def _check_backlog(self) -> None:
+        """Распознавание не успевает за речью: очередь звука почти полная, дальше звук начнёт теряться."""
+        if any(s.pipeline.queue.qsize() > QUEUE_WARN_AT for s in self._sources):
+            self._notify("Распознавание не успевает за речью: часть звука может потеряться. Закройте лишние программы.")
+
     def _check_devices(self) -> None:
+        self._check_backlog()
         signature = AudioSystem.default_signature()
         if signature is not None and signature != self._signature:
             # в системе выбрали другое устройство: PortAudio читает список устройств только при запуске,

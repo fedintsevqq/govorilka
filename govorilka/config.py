@@ -9,6 +9,8 @@ import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from govorilka.hotkeys import DEFAULT_HOTKEY
+
 log = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -21,6 +23,28 @@ def _user_data_dir() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Govorilka"
 
 
+def downloads_dir() -> Path:
+    """Папка «Загрузки» пользователя. На Windows её часто переносят на другой диск, поэтому спрашиваем систему."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class _Guid(ctypes.Structure):
+                _fields_ = [("a", ctypes.c_ulong), ("b", ctypes.c_ushort), ("c", ctypes.c_ushort), ("d", ctypes.c_ubyte * 8)]
+
+            folder_id = _Guid(0x374DE290, 0x123F, 0x4565, (ctypes.c_ubyte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
+            path = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder_id), 0, None, ctypes.byref(path)) == 0:  # type: ignore[attr-defined]
+                try:
+                    if path.value:
+                        return Path(path.value)
+                finally:
+                    ctypes.windll.ole32.CoTaskMemFree(path)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — запасной путь ниже подойдёт в большинстве случаев
+            log.exception("Не узнал папку Загрузки у системы")
+    return Path.home() / "Downloads"
+
+
 # В собранном приложении папка программы может быть только для чтения,
 # поэтому модели и настройки лежат в папке пользователя. При запуске из исходников — рядом с кодом.
 DATA_DIR = Path(os.environ["GOVORILKA_DATA_DIR"]) if "GOVORILKA_DATA_DIR" in os.environ else (
@@ -29,7 +53,10 @@ DATA_DIR = Path(os.environ["GOVORILKA_DATA_DIR"]) if "GOVORILKA_DATA_DIR" in os.
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 MODELS_DIR = DATA_DIR / "models"
 SETTINGS_FILE = DATA_DIR / "settings.json"
-DEFAULT_TRANSCRIPTS_DIR = Path.home() / "Documents" / "Govorilka" if FROZEN else APP_DIR / "transcripts"
+# Транскрипты по умолчанию лежат в Загрузках, в своей папке, чтобы не мешаться с остальными файлами
+DEFAULT_TRANSCRIPTS_DIR = downloads_dir() / "Govorilka"
+OLD_DEFAULT_TRANSCRIPTS_DIRS = (Path.home() / "Documents" / "Govorilka", APP_DIR / "transcripts")  # до версии 0.2
+SETTINGS_VERSION = 2
 AUDIOTAP_PATH = RESOURCE_DIR / "bin" / "govorilka-audiotap"  # помощник системного звука для macOS
 
 # Модель распознавания работает на 16 кГц моно
@@ -70,6 +97,10 @@ class Settings:
     capture_system: bool = True
     echo_filter: bool = True  # убирать из микрофона звук колонок
     split_speakers: bool = True  # различать собеседников по голосу: «Собеседник 1», «Собеседник 2»
+    hotkey_enabled: bool = True  # старт и стоп записи по комбинации клавиш, когда окно свёрнуто
+    hotkey: str = DEFAULT_HOTKEY  # «ctrl+shift», «alt+cmd», «ctrl+alt+r»
+    show_indicator: bool = True  # маленькая плашка «● Запись» поверх окон
+    settings_version: int = SETTINGS_VERSION
 
     @property
     def transcripts_path(self) -> Path:
@@ -81,23 +112,43 @@ class Settings:
 
 
 def load_settings(path: Path = SETTINGS_FILE) -> Settings:
+    """Читает настройки; битый или чужой файл не должен мешать запуску."""
     if not path.exists():
         return Settings()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))  # utf-8-sig: Блокнот добавляет BOM
+    except (OSError, ValueError) as exc:  # ValueError покрывает и битый JSON, и не-UTF-8
         log.warning("Не прочитал %s, беру настройки по умолчанию: %s", path, exc)
         return Settings()
-    known = {k: v for k, v in data.items() if k in Settings.__dataclass_fields__}
-    settings = replace(Settings(), **known)
+    if not isinstance(data, dict):
+        log.warning("В %s не объект настроек, беру настройки по умолчанию", path)
+        return Settings()
+    defaults = Settings()
+    if _same_path(data.get("transcripts_dir"), OLD_DEFAULT_TRANSCRIPTS_DIRS) and data.get("settings_version", 1) < 2:
+        data.pop("transcripts_dir")  # папку никто не выбирал, это был прежний вариант по умолчанию: берём «Загрузки»
+    # берём только известные поля нужного типа: строка вместо флага не должна доезжать до окна
+    known = {
+        key: value
+        for key, value in data.items()
+        if key in Settings.__dataclass_fields__ and isinstance(value, type(getattr(defaults, key)))
+    }
+    settings = replace(defaults, **known)
     if settings.model not in MODELS:
         settings = replace(settings, model=DEFAULT_MODEL)
     return settings
 
 
+def _same_path(value: object, candidates: tuple[Path, ...]) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = os.path.normcase(os.path.normpath(value))
+    return any(normalized == os.path.normcase(os.path.normpath(str(c))) for c in candidates)
+
+
 def save_settings(settings: Settings, path: Path = SETTINGS_FILE) -> None:
+    from govorilka.transcript import write_atomic  # через временный файл: сбой посреди записи не портит настройки
+
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(settings), ensure_ascii=False, indent=2), encoding="utf-8")
+        write_atomic(path, json.dumps(asdict(settings), ensure_ascii=False, indent=2))
     except OSError as exc:
         log.error("Не сохранил настройки в %s: %s", path, exc)

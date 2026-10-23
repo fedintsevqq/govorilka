@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -88,23 +88,51 @@ def write_atomic(path: Path, text: str) -> None:
     """Пишет файл через временный, чтобы читатель (Claude Code) не увидел половину."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8", newline="\n")  # одинаковые переводы строк на Windows и Mac
     os.replace(tmp, path)
 
 
-class AutoSaver:
-    """Переписывает файл транскрипта после каждой новой реплики."""
+def unique_path(path: Path) -> Path:
+    """Если файл уже есть (вторая запись с той же темой в ту же минуту), добавляем _2, _3…"""
+    if not path.exists():
+        return path
+    for number in range(2, 1000):
+        candidate = path.with_name(f"{path.stem}_{number}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    return path
 
-    def __init__(self, transcript: Transcript, directory: Path) -> None:
+
+class AutoSaver:
+    """Переписывает файл транскрипта после каждой новой реплики.
+
+    on_state вызывается только при смене состояния: текст ошибки, когда сохранение
+    перестало получаться (диск полон, файл занят), и None, когда снова получилось.
+    """
+
+    def __init__(
+        self,
+        transcript: Transcript,
+        directory: Path,
+        on_state: Callable[[str | None], None] = lambda _: None,
+    ) -> None:
         self.transcript = transcript
-        self.path = directory / transcript.default_filename()
+        self.path = unique_path(directory / transcript.default_filename())
+        self._on_state = on_state
+        self._failed = False
         self._lock = threading.Lock()  # сохраняют и поток распознавания, и окно
 
     def save(self) -> Path | None:
         try:
             with self._lock:
                 write_atomic(self.path, self.transcript.to_markdown())
-            return self.path
         except OSError as exc:
             log.error("Автосохранение в %s не удалось: %s", self.path, exc)
+            if not self._failed:
+                self._failed = True
+                self._on_state(f"{exc.strerror or exc}")
             return None
+        if self._failed:
+            self._failed = False
+            self._on_state(None)
+        return self.path

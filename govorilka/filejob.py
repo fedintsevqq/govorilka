@@ -50,8 +50,15 @@ class DecodedChunk:
     t: float  # секунды от начала файла
 
 
-def decode_audio(path: Path) -> tuple[float, Iterator[DecodedChunk]]:
-    """Длительность файла в секундах (0 — неизвестна) и поток кусков звука."""
+@dataclass
+class DecodedAudio:
+    duration: float  # секунды, 0 — неизвестна
+    chunks: Iterator[DecodedChunk]
+    close: Callable[[], None]  # закрывает файл; безопасно звать повторно, нужно и если чтение не началось
+
+
+def decode_audio(path: Path) -> DecodedAudio:
+    """Открывает аудио или видео и отдаёт звук кусками. Файл закрывайте через .close()."""
     import av
 
     try:
@@ -82,7 +89,7 @@ def decode_audio(path: Path) -> tuple[float, Iterator[DecodedChunk]]:
         finally:
             container.close()
 
-    return duration, chunks()
+    return DecodedAudio(duration, chunks(), container.close)
 
 
 class FileJob:
@@ -135,10 +142,19 @@ class FileJob:
             error = CANCELLED
         # даже при ошибке сохраняем всё, что успели расшифровать
         saved = self.saver.save() if self.transcript.utterances else None
+        if saved is None and self.transcript.utterances and error is None:
+            error = f"Не смог сохранить транскрипт: {self.saver.path}"
         self._on_done(saved, error)
 
     def _transcribe(self) -> None:
-        duration, chunks = decode_audio(self.source_path)
+        audio = decode_audio(self.source_path)
+        try:
+            self._transcribe_audio(audio)
+        finally:
+            audio.close()  # иначе при ошибке до начала чтения файл остаётся занятым до сборки мусора
+
+    def _transcribe_audio(self, audio: DecodedAudio) -> None:
+        duration, chunks = audio.duration, audio.chunks
         diarizer = Diarizer(self._engines.speakers.embed) if self._diarize else None
         processor = PhraseProcessor(SOURCE_FILE, SPEAKER_FILE, self._engines.recognizer, self._collect, diarizer)
         segmenter = Segmenter(detector=self._engines.vad.detector())

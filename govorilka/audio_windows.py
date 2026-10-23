@@ -48,7 +48,7 @@ class AudioSystem:
 
         try:
             return default_device_ids()
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 — COMError не наследует OSError; проверка не должна ронять запись
             log.warning("Не узнал устройства по умолчанию: %s", exc)
             return None
 
@@ -58,7 +58,7 @@ def _to_device(info: dict) -> DeviceInfo:
         index=int(info["index"]),
         name=str(info["name"]),
         rate=int(info["defaultSampleRate"]),
-        channels=max(1, min(2, int(info["maxInputChannels"]))),
+        channels=max(1, int(info["maxInputChannels"])),  # колонки 5.1/7.1 открываются только со своим числом каналов
     )
 
 

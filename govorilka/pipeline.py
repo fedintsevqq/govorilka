@@ -39,6 +39,9 @@ TextCallback = Callable[[TextEvent], None]
 LevelCallback = Callable[[str, float], None]
 
 
+PROBLEM_REPORT_EVERY = 5  # о повторяющейся ошибке сообщаем на 1-й, 5-й, 10-й… раз, а не на каждой фразе
+
+
 class PhraseProcessor:
     """Превращает события сегментера в текст: распознаёт и, если нужно, определяет голос."""
 
@@ -49,12 +52,16 @@ class PhraseProcessor:
         recognizer: Recognizer,
         on_text: TextCallback,
         diarizer: Diarizer | None = None,
+        on_problem: Callable[[str], None] = lambda _: None,
     ) -> None:
         self.source = source
         self.speaker = speaker
         self._recognizer = recognizer
         self._on_text = on_text
         self._diarizer = diarizer
+        self._on_problem = on_problem
+        self._failures = 0  # подряд не распознанных фраз
+        self._diarizer_broken = False
 
     def handle(self, event: SegmentEvent) -> None:
         end = event.start + len(event.audio) / SAMPLE_RATE
@@ -63,22 +70,41 @@ class PhraseProcessor:
             return
         try:
             text = self._recognizer.transcribe(event.audio)
-            speaker = self._speaker_for(event) if text else self.speaker
         except Exception:  # одна сломанная фраза не должна ронять запись
             log.exception("Ошибка распознавания (%s)", self.speaker)
             if event.kind == "final":
+                self._report_failure()
                 self._emit("discard", self.speaker, "", event.start, end)
             return
+        if event.kind == "final":
+            self._failures = 0
         if event.kind == "final" and not text:
             self._emit("discard", self.speaker, "", event.start, end)
             return
+        speaker = self._speaker_for(event) if text else self.speaker
         self._emit(event.kind, speaker, text, event.start, end)
+
+    def _report_failure(self) -> None:
+        self._failures += 1
+        if self._failures == 1 or self._failures % PROBLEM_REPORT_EVERY == 0:
+            self._on_problem(
+                f"Не распознал фразу ({self.speaker}): ошибка модели, подробности в govorilka.log. "
+                f"Пропущено подряд: {self._failures}"
+            )
 
     def _speaker_for(self, event: SegmentEvent) -> str:
         # черновики голос не определяют: дорого и бессмысленно, фраза ещё не закончена
         if self._diarizer is None or event.kind != "final":
             return self.speaker
-        return f"{self.speaker} {self._diarizer.assign(event.audio)}"
+        try:
+            return f"{self.speaker} {self._diarizer.assign(event.audio)}"
+        except Exception:
+            # сбой определения голоса не должен стоить текста: оставляем общее имя и говорим об этом один раз
+            log.exception("Ошибка определения голоса (%s)", self.speaker)
+            if not self._diarizer_broken:
+                self._diarizer_broken = True
+                self._on_problem("Не получилось определить голоса, текст идёт без разделения собеседников")
+            return self.speaker
 
     def _emit(self, kind: Kind, speaker: str, text: str, start: float, end: float) -> None:
         try:
