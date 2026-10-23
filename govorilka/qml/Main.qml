@@ -5,7 +5,7 @@ import QtQuick.Dialogs
 import QtQuick.Window
 
 // Главное окно Говорилки.
-// Слева — пульт записи: большая кнопка, таймер, уровень звука, источники, отправка в Claude Code.
+// Слева — пульт записи: большая кнопка, таймер, уровень звука, источники, отправка разговора нейросети.
 // Справа — лента транскрипта. Сверху — плавающая шапка с темой созвона.
 ApplicationWindow {
     id: window
@@ -30,10 +30,21 @@ ApplicationWindow {
                  stopping: "Сохраняю…", file: "Расшифровка" }[phase] || ""
     }
     function stateTint() {
+        // готов — зелёный, запись — красный, пауза — янтарный, всё «в процессе» — акцентный
         return phase === "recording" ? Theme.record : phase === "paused" ? Theme.pause
-             : phase === "file" ? Theme.accent : Theme.textSecondary
+             : phase === "idle" ? Theme.success : Theme.accent
     }
-    function showWindow() { window.show(); window.raise(); window.requestActivate() }
+    // «Окно» из кругового меню и трея: вернуть окно, даже если оно свёрнуто или закрыто другими программами.
+    // show() свёрнутое окно не разворачивает — поэтому разворачиваем явно, в том же виде, в каком его свернули.
+    property bool wasMaximized: false
+    onVisibilityChanged: (mode) => { if (mode === Window.Maximized || mode === Window.Windowed) wasMaximized = mode === Window.Maximized }
+    function showWindow() {
+        if (window.visibility === Window.Minimized || !window.visible)
+            window.wasMaximized ? window.showMaximized() : window.showNormal()
+        window.raise()
+        window.requestActivate()
+        backend.bringToFront(window)   // Windows не всегда отдаёт фокус по просьбе: дожимаем системным вызовом
+    }
 
     onClosing: (close) => {
         if (backend.trayAvailable) {   // Говорилка уходит в трей и продолжает слушать горячую клавишу
@@ -85,7 +96,8 @@ ApplicationWindow {
                 Layout.minimumWidth: 116   // подпись состояния меняет длину — поле темы рядом не прыгает
                 text: window.stateLabel()
                 tint: window.stateTint()
-                dot: window.phase === "recording"
+                dot: true
+                pulse: window.phase === "recording" || window.phase === "starting" || window.phase === "stopping" || window.phase === "file"
             }
 
             Rectangle {   // тема созвона
@@ -230,13 +242,16 @@ ApplicationWindow {
                     ToolTip.delay: 300
                 }
 
-                PillButton {
+                PillButton {   // обычная кнопка, а не «премиум»: нейросеть — ваш выбор в настройках
                     Layout.fillWidth: true
-                    variant: "primary"
-                    text: "Отправить в Claude Code"
+                    text: backend.aiTarget.id === "clipboard" ? "Скопировать для нейросети" : "Отправить в " + backend.aiTarget.name
                     iconName: "sparkle"
-                    tip: "Открыть Claude Code с этим транскриптом и вашей подсказкой из настроек: итоги, задачи, письмо"
-                    onClicked: backend.sendToClaude()
+                    tip: backend.aiTarget.id === "claude_code"
+                         ? "Открыть Claude Code с этим транскриптом и вашим запросом: итоги, задачи, письмо. Нейросеть меняется в настройках"
+                         : backend.aiTarget.web
+                           ? "Скопировать разговор с вашим запросом и открыть " + backend.aiTarget.name + " — останется вставить. Нейросеть меняется в настройках"
+                           : "Скопировать разговор с вашим запросом, чтобы вставить в любую нейросеть"
+                    onClicked: backend.sendToAi()
                 }
 
                 RowLayout {

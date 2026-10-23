@@ -33,12 +33,12 @@ Window {
         { id: "stop", icon: "stop", label: "Стоп", tint: Theme.record },
         { id: "pause", icon: phase === "paused" ? "play" : "pause", label: phase === "paused" ? "Продолжить" : "Пауза", tint: Theme.pause },
         { id: "mark", icon: "star", label: "Отметка", tint: Theme.mark },
-        { id: "claude", icon: "sparkle", label: "В Claude", tint: Theme.accentA },
+        { id: "claude", icon: "sparkle", label: backend.aiTarget.short, tint: Theme.accentA },
         { id: "transcript", icon: "file", label: "Транскрипт", tint: Theme.accentB },
         { id: "window", icon: "window", label: "Окно", tint: Theme.textSecondary }
     ] : [
         { id: "record", icon: "record", label: "Запись", tint: Theme.record },
-        { id: "claude", icon: "sparkle", label: "В Claude", tint: Theme.accentA },
+        { id: "claude", icon: "sparkle", label: backend.aiTarget.short, tint: Theme.accentA },
         { id: "transcript", icon: "file", label: "Транскрипт", tint: Theme.accentB },
         { id: "settings", icon: "settings", label: "Настройки", tint: Theme.textSecondary },
         { id: "window", icon: "window", label: "Окно", tint: Theme.textSecondary },

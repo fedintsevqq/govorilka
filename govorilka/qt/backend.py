@@ -15,7 +15,7 @@ from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 from PySide6.QtCore import Property, QObject, QPoint, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QWindow
 
 from govorilka.audio_base import PermissionDeniedError
 from govorilka.config import MODELS, SOURCE_MIC, SOURCE_SYSTEM, Settings
@@ -33,6 +33,8 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
+from govorilka import ai
+from govorilka.qt.foreground import bring_to_front
 from govorilka.qt.models import TranscriptModel
 from govorilka.transcript import Transcript, format_offset
 
@@ -271,6 +273,15 @@ class Backend(QObject):
 
     models = Property("QVariantList", _get_models, constant=True)
 
+    def _get_ai(self) -> dict[str, str]:
+        target = ai.TARGETS[self.controller.ai_target()]
+        return {"name": target.name, "short": target.short, "web": bool(target.url), "id": self.controller.ai_target()}
+
+    aiTarget = Property("QVariantMap", _get_ai, notify=settingsChanged)  # noqa: N815 — куда уйдёт разговор
+    aiChoices = Property(  # noqa: N815
+        "QVariantList", lambda self: [{"id": key, "label": label} for key, label in ai.CHOICES], constant=True
+    )
+
     autostart = Property(bool, lambda self: self.controller.autostart_enabled(), notify=settingsChanged)
     inputMonitoringMissing = Property(  # noqa: N815
         bool, lambda self: input_monitoring_status() is False, notify=settingsChanged
@@ -327,10 +338,12 @@ class Backend(QObject):
 
     @Slot()
     @safe_slot
-    def sendToClaude(self) -> None:  # noqa: N802
-        result = self.controller.send_to_claude()
+    def sendToAi(self) -> None:  # noqa: N802
+        result = self.controller.send_to_ai()
         if result.clipboard:
             QGuiApplication.clipboard().setText(result.clipboard)
+        if result.url:
+            QDesktopServices.openUrl(QUrl(result.url))
         self.toast.emit(result.message, "success" if result.ok else "error")
 
     @Slot()
@@ -426,6 +439,12 @@ class Backend(QObject):
             self.controller.update_settings(map_to_settings(self.controller.settings, {"tour_done": True}))
             self.settingsChanged.emit()
 
+    @Slot(QObject)
+    @safe_slot
+    def bringToFront(self, window: QObject) -> None:  # noqa: N802
+        if sys.platform == "win32" and isinstance(window, QWindow):
+            bring_to_front(int(window.winId()))
+
     @Slot(str)
     @safe_slot
     def radialAction(self, name: str) -> None:  # noqa: N802
@@ -437,7 +456,7 @@ class Backend(QObject):
             "pause": self.controller.toggle_pause,
             "stop": self.controller.stop_recording,
             "mark": self.addMark,
-            "claude": self.sendToClaude,
+            "claude": self.sendToAi,
             "transcript": self.openTranscript,
             "window": self.windowRequested.emit,
             "settings": self.settingsRequested.emit,

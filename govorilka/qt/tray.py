@@ -85,7 +85,11 @@ class Tray(QObject):
             self._action("Продолжить" if state == "paused" else "Пауза", self._backend.togglePause)
             self._action("Поставить отметку ★", self._backend.addMark)
         self._menu.addSeparator()
-        self._action("Отправить в Claude Code", self._backend.sendToClaude)
+        target = self._backend.aiTarget
+        self._action(
+            "Скопировать для нейросети" if target["id"] == "clipboard" else f"Отправить в {target['name']}",
+            self._backend.sendToAi,
+        )
         self._action("Открыть транскрипт", self._backend.openTranscript)
         self._action("Папка с транскриптами", self._backend.openFolder)
         self._menu.addSeparator()

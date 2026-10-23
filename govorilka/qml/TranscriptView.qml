@@ -275,11 +275,14 @@ Item {
             border.color: jump.visualFocus ? Theme.accent : Theme.shellLine
             border.width: jump.visualFocus ? 2 : 1
         }
-        contentItem: Row {
-            id: jumpRow
-            spacing: 6
-            Text { text: "К последней фразе"; font.pixelSize: 13; font.weight: Font.Medium; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-            Icon { name: "chevron"; size: 14; color: Theme.textSecondary; rotation: 90; anchors.verticalCenter: parent.verticalCenter }
+        contentItem: Item {   // подпись и стрелка ровно по центру пилюли
+            Row {
+                id: jumpRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "К последней фразе"; font.pixelSize: 13; font.weight: Font.Medium; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "chevron"; size: 14; color: Theme.textSecondary; rotation: 90; anchors.verticalCenter: parent.verticalCenter }
+            }
         }
     }
 }

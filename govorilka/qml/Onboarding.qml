@@ -28,7 +28,7 @@ Popup {
     function back() { if (step > 0) step-- }
     function finish() { close() }
     function labelOf(id) {
-        return { record: "Запись", claude: "В Claude", transcript: "Транскрипт", settings: "Настройки",
+        return { record: "Запись", claude: backend.aiTarget.short, transcript: "Транскрипт", settings: "Настройки",
                  window: "Окно", stop: "Стоп", pause: "Пауза", mark: "Отметка" }[id] || id
     }
 
@@ -251,7 +251,7 @@ Popup {
         body: !tour.opts.hotkey_enabled ? "С ней Говорилкой можно управлять, не открывая окно. Включите её — это одна кнопка ниже."
             : tour.chosen !== "" ? "Вы выбрали «" + tour.labelOf(tour.chosen) + "». Это тренировка, поэтому ничего не запустилось. В работе так же: зажали, повели мышь, отпустили. Можно и просто кликнуть по кружку."
             : tour.menuSeen ? "Меню открылось у курсора. Не отпуская клавиш, ведите мышь в сторону любого кружка: попадать точно не нужно, важно направление."
-            : "Так открывается круговое меню: запись, пауза, отметка, Claude Code. Работает из любой программы, даже когда окно Говорилки закрыто. Попробуйте прямо сейчас." +
+            : "Так открывается круговое меню: запись, пауза, отметка, отправка нейросети. Работает из любой программы, даже когда окно Говорилки закрыто. Попробуйте прямо сейчас." +
               (backend.isMac && backend.inputMonitoringMissing ? "<br><br><b>macOS пока не разрешила читать клавиши.</b> Откройте Настройки → Конфиденциальность → Мониторинг ввода и включите Говорилку." : "")
         Column {
             anchors.centerIn: parent
@@ -396,7 +396,7 @@ Popup {
     // 4. После созвона
     component Page3: Page {
         title: "После созвона"
-        body: "Нажмите на имя «Собеседник 1», чтобы подписать человека, — имя встанет во все его реплики. Важный момент можно отметить звёздочкой. Кнопка «Отправить в Claude Code» отдаёт весь разговор нейросети. Файлы лежат в папке <b>" + String(tour.opts.transcripts_dir).split(/[\\/]/).slice(-2).join("/") + "</b>."
+        body: "Нажмите на имя «Собеседник 1», чтобы подписать человека, — имя встанет во все его реплики. Важный момент можно отметить звёздочкой. Кнопка «Отправить в " + backend.aiTarget.name + "» отдаёт весь разговор нейросети: ChatGPT, Claude или другой — выберите в настройках. Файлы лежат в папке <b>" + String(tour.opts.transcripts_dir).split(/[\\/]/).slice(-2).join("/") + "</b>."
         Column {
             anchors.centerIn: parent
             spacing: 12
@@ -438,7 +438,7 @@ Popup {
                 Repeater {
                     model: [
                         { icon: "star", text: "Отметка", tint: Theme.mark },
-                        { icon: "sparkle", text: "В Claude Code", tint: Theme.accentA },
+                        { icon: "sparkle", text: "В " + backend.aiTarget.name, tint: Theme.accentA },
                         { icon: "folder", text: "Папка", tint: Theme.accentB }
                     ]
                     Rectangle {

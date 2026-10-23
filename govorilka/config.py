@@ -83,11 +83,16 @@ SOURCE_FILE = "file"
 SOURCE_MARK = "mark"  # то же, что transcript.SOURCE_MARK
 SOURCE_NOTE = "note"  # то же, что transcript.SOURCE_NOTE
 
-DEFAULT_PROMPT = (
+OLD_DEFAULT_PROMPT = (  # запрос до 0.3: говорил про файл, а в веб-чат уходит не файл, а текст
     "В этом файле транскрипт рабочего созвона: {file}. "
     "Прочитай его и сделай: короткое резюме, принятые решения, "
     "задачи с ответственными и сроками, открытые вопросы, риски для тестирования. "
     "Если созвон ещё идёт, файл дописывается — перечитай его, когда я попрошу."
+)
+DEFAULT_PROMPT = (
+    "Транскрипт рабочего созвона: {file}. "
+    "Прочитай его и сделай: короткое резюме, принятые решения, "
+    "задачи с ответственными и сроками, открытые вопросы, риски для тестирования."
 )
 
 
@@ -98,7 +103,8 @@ class Settings:
     model: str = DEFAULT_MODEL
     transcripts_dir: str = str(DEFAULT_TRANSCRIPTS_DIR)
     claude_workdir: str = ""  # пусто — запускать Claude Code в папке транскриптов
-    claude_prompt: str = DEFAULT_PROMPT
+    claude_prompt: str = DEFAULT_PROMPT  # что попросить у нейросети ({file} — транскрипт)
+    ai_target: str = "auto"  # куда отправлять разговор: см. govorilka/ai.py
     capture_mic: bool = True
     capture_system: bool = True
     echo_filter: bool = True  # убирать из микрофона звук колонок
@@ -144,6 +150,8 @@ def load_settings(path: Path = SETTINGS_FILE) -> Settings:
         if key in Settings.__dataclass_fields__ and isinstance(value, type(getattr(defaults, key)))
     }
     settings = replace(defaults, **known)
+    if settings.claude_prompt == OLD_DEFAULT_PROMPT:  # запрос никто не менял — берём новый, подходящий и для чатов
+        settings = replace(settings, claude_prompt=DEFAULT_PROMPT)
     if settings.model not in MODELS:
         settings = replace(settings, model=DEFAULT_MODEL)
     return settings

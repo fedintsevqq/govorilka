@@ -555,3 +555,25 @@ def test_claude_workdir_can_be_cleared_but_other_texts_keep_their_value():
     current = Settings(claude_workdir="C:/work", transcripts_dir="C:/t")
     result = map_to_settings(current, {"claude_workdir": "  ", "transcripts_dir": ""})
     assert result.claude_workdir == "" and result.transcripts_dir == "C:/t"
+
+
+def test_window_action_brings_back_a_minimized_window(qapp, tmp_path):
+    from PySide6.QtGui import QWindow
+
+    from govorilka.qt.app import create_engine
+
+    settings = Settings(transcripts_dir=str(tmp_path), tour_done=True)
+    backend = Backend(lambda listener: Controller(listener, settings, hotkeys=NoHotkeys()))
+    engine = create_engine(backend, strict=True)
+    window = engine.rootObjects()[0]
+    assert pump(qapp, window.isExposed)
+    window.showMinimized()
+    assert pump(qapp, lambda: window.visibility() == QWindow.Visibility.Minimized)
+    backend.windowRequested.emit()  # то же, что «Окно» в круговом меню и в трее
+    assert pump(qapp, lambda: window.visibility() != QWindow.Visibility.Minimized and window.isVisible())
+    window.hide()
+    assert pump(qapp, lambda: not window.isVisible())
+    backend.windowRequested.emit()  # окно было убрано в трей
+    assert pump(qapp, window.isVisible)
+    window.hide()
+    engine.deleteLater()

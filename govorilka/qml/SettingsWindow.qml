@@ -22,6 +22,7 @@ Window {
     property bool autostart: false
     property string hotkeyLabel: ""
     property string hotkeyWarning: ""
+    readonly property bool claudeCode: draft.ai_target === "claude_code" || draft.ai_target === "auto"   // папка нужна только Claude Code
     signal tourRequested()
 
     function open() {
@@ -34,6 +35,7 @@ Window {
         folderField.text = draft.transcripts_dir
         claudeField.text = draft.claude_workdir
         modelBox.currentIndex = Math.max(0, modelBox.find(draft.model))
+        aiBox.currentIndex = Math.max(0, aiBox.find(draft.ai_target))
         themeBox.currentIndex = ["system", "dark", "light"].indexOf(draft.theme)
         actionBox.currentIndex = draft.hotkey_action === "record" ? 1 : 0
         show()
@@ -264,10 +266,26 @@ Window {
             }
 
             Section {
-                heading: "Claude Code"
-                Label { text: "Где запускать (пусто — в папке транскриптов)" }
-                FieldBox { id: claudeField; trailingButton: true; onBrowse: { folderDialog.target = claudeField; folderDialog.open() } }
-                Label { text: "Запрос ({file} — путь к транскрипту)" }
+                heading: "Нейросеть"
+                Label { text: "Куда отправлять разговор" }
+                ComboField {
+                    id: aiBox
+                    model: backend.aiChoices
+                    textRole: "label"
+                    onActivated: win.setValue("ai_target", backend.aiChoices[currentIndex].id)
+                    function find(id) { for (let i = 0; i < backend.aiChoices.length; ++i) if (backend.aiChoices[i].id === id) return i; return 0 }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "В браузерный чат Говорилка копирует разговор и открывает сайт — останется вставить и нажать Enter. Claude Code читает файл сам."
+                    font.pixelSize: 12
+                    lineHeight: 1.2
+                    color: Theme.textTertiary
+                }
+                Label { visible: win.claudeCode; text: "Где запускать Claude Code (пусто — в папке транскриптов)" }
+                FieldBox { id: claudeField; visible: win.claudeCode; trailingButton: true; onBrowse: { folderDialog.target = claudeField; folderDialog.open() } }
+                Label { text: "Что попросить ({file} — транскрипт)" }
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 128
@@ -328,7 +346,7 @@ Window {
     // Esc в открытом списке закрывает только список, а не всё окно
     Shortcut {
         sequences: ["Escape"]
-        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible
+        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible
         onActivated: win.close()
     }
 }
