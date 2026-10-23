@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -37,8 +39,12 @@ def _npm_shim_is_alive(shim: Path) -> bool:
 
 
 def find_claude() -> Path | None:
-    if IS_MAC:
-        return _find_claude_mac()
+    """Ищет Claude Code: свой установщик, потом PATH, потом копия, встроенная в Claude Desktop."""
+    standalone = _find_standalone_mac() if IS_MAC else _find_standalone_windows()
+    return standalone or find_bundled_claude()
+
+
+def _find_standalone_windows() -> Path | None:
     native = Path.home() / ".local" / "bin" / "claude.exe"
     if native.is_file():
         return native
@@ -53,12 +59,56 @@ def find_claude() -> Path | None:
     return None
 
 
-def _find_claude_mac() -> Path | None:
+def _find_standalone_mac() -> Path | None:
     for place in MAC_CLAUDE_PLACES:
         if place.is_file():
             return place
     found = shutil.which("claude")
     return Path(found) if found else None
+
+
+# ---------- Claude Code, встроенный в приложение Claude Desktop ----------
+
+_VERSION = re.compile(r"\d+(?:\.\d+)*")
+_BUNDLED_NAMES = ("claude.exe", "claude")
+_BUNDLED_DEPTH = 3  # claude-code/<версия>/[<хеш>/[папка/]]claude
+
+
+def bundled_base() -> Path:
+    """Где Claude Desktop хранит свои копии Claude Code (обновляет их сам, версия в имени папки)."""
+    if IS_MAC:
+        return Path.home() / "Library" / "Application Support" / "Claude" / "claude-code"
+    appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(appdata) / "Claude" / "claude-code"
+
+
+def _version_key(version_dir: str) -> tuple[int, ...]:
+    match = _VERSION.search(version_dir)
+    return tuple(int(part) for part in match.group().split(".")) if match else (0,)
+
+
+def _is_runnable(path: Path) -> bool:
+    return path.is_file() and (sys.platform == "win32" or os.access(path, os.X_OK))
+
+
+def find_bundled_claude(base: Path | None = None) -> Path | None:
+    """Самая свежая встроенная копия. Версии сравниваем по числам: 2.10.0 новее 2.9.5, а не наоборот."""
+    base = base or bundled_base()
+    try:
+        version_dirs = [d for d in base.iterdir() if d.is_dir()]
+    except OSError:
+        return None  # Claude Desktop не установлен или не запускался
+    best: tuple[tuple[int, ...], float, Path] | None = None
+    for version_dir in version_dirs:
+        key = _version_key(version_dir.name)
+        for name in _BUNDLED_NAMES:
+            for depth in range(_BUNDLED_DEPTH):
+                for path in version_dir.glob("/".join(["*"] * depth + [name])):
+                    if _is_runnable(path):
+                        candidate = (key, path.stat().st_mtime, path)
+                        if best is None or candidate[:2] > best[:2]:
+                            best = candidate
+    return best[2] if best else None
 
 
 def build_prompt(transcript_file: Path, template: str) -> str:

@@ -95,7 +95,9 @@ SmartScreen может предупредить о неизвестном изд
 
 На Windows Claude открывается в PowerShell, на Mac — в Терминале. При первом запуске macOS спросит, можно ли Говорилке управлять Терминалом: разрешите.
 
-Нужен установленный Claude Code CLI. Windows (PowerShell):
+Говорилка находит Claude Code сама. Порядок поиска: установленный отдельно (`~/.local/bin`, Homebrew, PATH), затем копия, встроенная в приложение **Claude Desktop** (Windows: `%APPDATA%\Claude\claude-code`, Mac: `~/Library/Application Support/Claude/claude-code`). Из нескольких версий берётся самая свежая. Если у вас стоит Claude Desktop, ничего ставить не нужно.
+
+Если Claude Code не найден, поставьте его отдельно. Windows (PowerShell):
 
 ```powershell
 irm https://claude.ai/install.ps1 | iex
