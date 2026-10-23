@@ -6,17 +6,17 @@
 или сервис недоступен — ничего не открываем и не отправляем, а подсказываем включить VPN или выбрать GigaChat,
 Алису, DeepSeek: они работают в России.
 
-Claude Code сам читает файл транскрипта. ChatGPT и Claude принимают текст прямо в адресе (`?q=`): короткий разговор
-сразу оказывается в поле ввода. Длинный в адрес не влезает (браузеры и Windows режут длинные ссылки), поэтому
-текст всегда ещё и в буфере обмена — тогда остаётся вставить. Остальные чаты текст из адреса не берут.
+Claude Code сам читает файл транскрипта. Веб-чатам длинный текст снаружи не передать (ссылка с текстом обрезается
+браузером и Windows), поэтому разговор кладётся в буфер обмена, чат открывается, а на Windows Говорилка сама
+вставляет текст в поле ввода, когда окно чата окажется впереди (govorilka/qt/autopaste.py). Отправляете вы.
 """
 
 from __future__ import annotations
 
 import logging
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
@@ -26,20 +26,22 @@ class Target:
     name: str  # как называть в кнопке: «Отправить в ChatGPT»
     short: str  # в круговом меню места мало
     url: str = ""  # веб-чат; пусто — не браузер
-    query: str = ""  # параметр адреса, которым чат принимает текст запроса; пусто — не умеет
     probe: str = ""  # где спросить, из какой страны нас видно; пусто — сервис работает и без VPN
+    reach: str = ""  # сам сайт чата, если страну он не сообщает: он обязан ответить, иначе не открываем
 
 
 CLAUDE_CODE = "claude_code"
 CLIPBOARD = "clipboard"
-MAX_URL = 8_000  # длиннее ссылку не строим: чаты и Windows обрезают длинные адреса, кириллица — 6 знаков на букву
 
 TARGETS: dict[str, Target] = {
-    "chatgpt": Target("ChatGPT", "ChatGPT", "https://chatgpt.com/", "q", "https://chatgpt.com/cdn-cgi/trace"),
-    "claude": Target("Claude", "Claude", "https://claude.ai/new", "q", "https://claude.ai/cdn-cgi/trace"),
+    "chatgpt": Target("ChatGPT", "ChatGPT", "https://chatgpt.com/", "https://chatgpt.com/cdn-cgi/trace"),
+    "claude": Target("Claude", "Claude", "https://claude.ai/new", "https://claude.ai/cdn-cgi/trace"),
     CLAUDE_CODE: Target("Claude Code", "Claude Code", probe="https://claude.ai/cdn-cgi/trace"),
     # у Google нет такой страницы; Gemini недоступен там же, где ChatGPT, — спрашиваем у него
-    "gemini": Target("Gemini", "Gemini", "https://gemini.google.com/app", probe="https://chatgpt.com/cdn-cgi/trace"),
+    "gemini": Target(
+        "Gemini", "Gemini", "https://gemini.google.com/app",
+        probe="https://chatgpt.com/cdn-cgi/trace", reach="https://gemini.google.com/",
+    ),
     "deepseek": Target("DeepSeek", "DeepSeek", "https://chat.deepseek.com/"),
     "gigachat": Target("GigaChat", "GigaChat", "https://giga.chat/"),
     "alice": Target("Алису", "Алиса", "https://alice.yandex.ru/"),
@@ -49,13 +51,13 @@ TARGETS: dict[str, Target] = {
 # для настроек: как выбор называется в списке
 CHOICES: list[tuple[str, str]] = [
     (CLIPBOARD, "Скопировать — вставлю в любую нейросеть сам"),
-    ("chatgpt", "ChatGPT — откроется с разговором в браузере"),
-    ("claude", "Claude — откроется с разговором в браузере"),
+    ("chatgpt", "ChatGPT — откроется в браузере, разговор вставится сам"),
+    ("claude", "Claude — откроется в браузере, разговор вставится сам"),
     (CLAUDE_CODE, "Claude Code — на этом компьютере"),
-    ("gemini", "Gemini — откроется в браузере"),
-    ("deepseek", "DeepSeek — откроется в браузере"),
-    ("gigachat", "GigaChat — откроется в браузере"),
-    ("alice", "Алиса (Яндекс) — откроется в браузере"),
+    ("gemini", "Gemini — откроется в браузере, разговор вставится сам"),
+    ("deepseek", "DeepSeek — откроется в браузере, разговор вставится сам"),
+    ("gigachat", "GigaChat — откроется в браузере, разговор вставится сам"),
+    ("alice", "Алиса (Яндекс) — откроется в браузере, разговор вставится сам"),
 ]
 
 
@@ -80,6 +82,19 @@ def probe_country(url: str, timeout: float = PROBE_TIMEOUT_S) -> str | None:
     return None
 
 
+def reachable(url: str, timeout: float = PROBE_TIMEOUT_S) -> bool:
+    """Отвечает ли сайт вообще (любым кодом). Нет — значит, его режет сеть: открывать бесполезно."""
+    try:
+        request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Govorilka"})
+        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 — адрес из списка выше
+            return True
+    except urllib.error.HTTPError:
+        return True  # 403, 405 и прочие ответы — сайт жив
+    except OSError as exc:
+        log.info("Сайт %s не отвечает: %s", url, exc)
+        return False
+
+
 def availability_problem(target: Target, country: str | None) -> str:
     """Почему сейчас нельзя открывать сервис (пустая строка — можно)."""
     if not target.probe:
@@ -101,15 +116,6 @@ def availability_hint(country: str | None) -> str:
 def resolve(choice: str) -> str:
     """Неизвестное или устаревшее значение (например, прежнее «auto») — просто скопировать."""
     return choice if choice in TARGETS else CLIPBOARD
-
-
-def chat_url(target: Target, text: str) -> tuple[str, bool]:
-    """Адрес чата и то, удалось ли вложить в него сам разговор (если чат умеет и ссылка не слишком длинная)."""
-    if target.query:
-        url = f"{target.url}?{target.query}={quote(text, safe='')}"
-        if len(url) <= MAX_URL:
-            return url, True
-    return target.url, False
 
 
 def chat_text(template: str, markdown: str) -> str:

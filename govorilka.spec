@@ -114,7 +114,9 @@ if IS_MAC:
             "LSMinimumSystemVersion": MAC_MIN_OS,
             "NSHighResolutionCapable": True,
             "NSMicrophoneUsageDescription": "Говорилка записывает ваш голос, чтобы расшифровать созвон.",
-            "NSAppleEventsUsageDescription": "Говорилка открывает Терминал, чтобы передать транскрипт в Claude Code.",
+            "NSAppleEventsUsageDescription": (
+                "Говорилка открывает Терминал для Claude Code и вставляет разговор в чат нейросети, когда он откроется."
+            ),
         },
     )
 else:

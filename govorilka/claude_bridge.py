@@ -164,15 +164,19 @@ def open_in_claude(transcript_file: Path, workdir: Path, prompt: str) -> None:
         if result.returncode != 0:
             raise OSError(f"Terminal не открылся: {result.stderr.strip()}")
         return
-    subprocess.Popen(
-        [
-            "powershell.exe",
-            "-NoExit",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-EncodedCommand",
-            encode_command(build_command(claude, workdir, prompt)),
-        ],
-        creationflags=subprocess.CREATE_NEW_CONSOLE,  # type: ignore[attr-defined]  # есть только на Windows
-    )
+    shell = [
+        "powershell.exe",
+        "-NoExit",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encode_command(build_command(claude, workdir, prompt)),
+    ]
+    # Claude Code — консольная программа, ей нужен терминал. Современный Windows Terminal (вкладки, нормальные шрифты
+    # и цвета) берём, если он есть; иначе — классическое окно PowerShell.
+    terminal = shutil.which("wt.exe")
+    if terminal:
+        subprocess.Popen([terminal, "--title", "Claude Code", "-d", str(workdir), *shell])
+        return
+    subprocess.Popen(shell, creationflags=subprocess.CREATE_NEW_CONSOLE)  # type: ignore[attr-defined]  # только Windows

@@ -38,3 +38,13 @@ def bring_to_front(hwnd: int) -> bool:
     if not ok:
         log.info("Windows не дал вывести окно вперёд")
     return ok
+
+
+ASFW_ANY = -1
+
+
+def allow_foreground_handoff() -> None:
+    """Разрешает программе, которую мы сейчас откроем (браузеру), выйти вперёд. Без этого Windows иногда открывает
+    вкладку за нашим окном. Только Windows."""
+    if sys.platform == "win32":
+        ctypes.windll.user32.AllowSetForegroundWindow(ASFW_ANY)

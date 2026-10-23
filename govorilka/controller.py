@@ -75,6 +75,7 @@ class ClaudeResult:
     message: str
     clipboard: str | None = None  # что положить в буфер (текст для чата или запрос, если Claude Code не нашёлся)
     url: str = ""  # какой чат открыть в браузере
+    target: str = ""  # какой это чат: окну нужно, чтобы вставить разговор, когда чат откроется
 
 
 class Controller:
@@ -95,7 +96,8 @@ class Controller:
         self._stopping: threading.Thread | None = None
         self._voice_book: VoiceBook | None = None
         self._closing = False  # идёт выход: новые записи не начинаем
-        self._probe_country = ai.probe_country  # подменяется в тестах: настоящая проверка ходит в сеть
+        self._probe_country = ai.probe_country  # подменяются в тестах: настоящие проверки ходят в сеть
+        self._reachable = ai.reachable
         self.hotkeys = hotkeys or HotkeyWatcher(
             on_trigger=listener.on_hotkey,
             on_error=listener.on_status,
@@ -457,6 +459,8 @@ class Controller:
         if info.probe:  # зарубежный сервис: сначала убеждаемся, что он доступен и не забанит за страну
             country = self._probe_country(info.probe)
             problem = ai.availability_problem(info, country)
+            if not problem and info.reach and not self._reachable(info.reach):
+                problem = f"{info.name} не открывается из вашей сети"
             if problem:
                 return ClaudeResult(
                     False,
@@ -468,13 +472,10 @@ class Controller:
             return self.send_to_claude()
         if not info.url:
             return ClaudeResult(True, f"Разговор и запрос скопированы — вставьте в любую нейросеть ({paste})", clipboard=text)
-        url, inside = ai.chat_url(info, text)
-        if inside:  # разговор уже в поле ввода; в буфере — на случай, если чат попросит войти и потеряет текст
-            return ClaudeResult(True, f"Открыл {info.name} с разговором. Текст есть и в буфере обмена", clipboard=text, url=url)
-        hint = " — разговор длинный для ссылки" if info.query else ""
-        return ClaudeResult(
-            True, f"Разговор скопирован{hint}. В {info.name} нажмите {paste} и Enter", clipboard=text, url=url
-        )
+        # окно чата появится — Говорилка сама вставит текст, в том числе после входа в аккаунт (qt/autopaste.py)
+        message = (f"Открываю {info.name}: разговор вставится в поле ввода сам — и после входа в аккаунт тоже. "
+                   f"Проверьте и нажмите Enter. Не вставился — нажмите {paste}")
+        return ClaudeResult(True, message, clipboard=text, url=info.url, target=target)
 
     def send_to_claude(self) -> ClaudeResult:
         if not self.save_now():

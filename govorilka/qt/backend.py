@@ -35,7 +35,8 @@ from govorilka.hotkeys import (
 )
 from govorilka.pipeline import TextEvent
 from govorilka import ai
-from govorilka.qt.foreground import bring_to_front
+from govorilka.qt import autopaste
+from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
 from govorilka.transcript import Transcript, format_offset
 
@@ -370,7 +371,11 @@ class Backend(QObject):
         if result.clipboard:
             QGuiApplication.clipboard().setText(result.clipboard)
         if result.url:
+            allow_foreground_handoff()  # браузер должен выйти вперёд, иначе вставлять будет некуда
             QDesktopServices.openUrl(QUrl(result.url))
+            autopaste.start(result.target, on_no_permission=lambda: self.toast.emit(
+                "macOS не дал вставить текст: включите Говорилку в Настройки → Конфиденциальность и безопасность → "
+                "Универсальный доступ. Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
         self.toast.emit(result.message, "success" if result.ok else "error")
 
     @Slot()
