@@ -49,7 +49,7 @@ def test_transcript_files_use_unix_newlines(tmp_path):
 def test_save_failure_is_reported_once_and_recovery_too(tmp_path):
     states = []
     blocker = tmp_path / "blocked"
-    blocker.write_text("файл на месте папки")  # mkdir внутри упадёт
+    blocker.write_text("файл на месте папки", encoding="utf-8")  # mkdir внутри упадёт
     saver = AutoSaver(Transcript(datetime(2026, 1, 1), "t"), blocker, states.append)
     assert saver.save() is None and saver.save() is None
     assert len(states) == 1 and states[0]  # текст ошибки, один раз
