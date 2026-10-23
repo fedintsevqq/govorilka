@@ -91,7 +91,9 @@ def test_working_helper_delivers_audio_chunks(fake_helper):
     out: queue.Queue = queue.Queue()
     capture = audio_mac.AudioSystem().open_capture(audio_mac.SYSTEM_DEVICE, out)
     chunk = out.get(timeout=2)
-    assert len(chunk.samples) == 1600 and abs(float(chunk.samples.mean()) - 0.25) < 0.01
+    # потоковый фильтр придерживает несколько миллисекунд до следующего куска, поэтому первый кусок чуть короче
+    assert 1400 <= len(chunk.samples) <= 1600
+    assert abs(float(chunk.samples[-500:].mean()) - 0.25) < 0.01
     capture.stop()
     assert process.terminated or process.poll() is not None
 

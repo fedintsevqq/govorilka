@@ -4,7 +4,7 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
 
 IS_MAC = sys.platform == "darwin"
 VERSION = os.environ.get("GOVORILKA_VERSION", "0.0.0")
@@ -12,10 +12,13 @@ MAC_ARCH = os.environ.get("GOVORILKA_ARCH", "arm64")  # arm64 — Apple Silicon,
 MAC_MIN_OS = "13.0" if MAC_ARCH == "x86_64" else "14.0"  # под onnxruntime для своей архитектуры
 
 datas = collect_data_files("onnx_asr")  # предобработчики звука в .onnx лежат внутри пакета
+# livekit грузит нативную библиотеку WebRTC (эхоподавление) из своего пакета через importlib.resources
+datas += collect_data_files("livekit", includes=["rtc/resources/*"])
 # onnx_asr и huggingface_hub при импорте читают версии пакетов через importlib.metadata
 for package in ("onnx-asr", "onnxruntime", "huggingface_hub", "numpy"):
     datas += copy_metadata(package)
-binaries = []
+# библиотеку WebRTC кладём как бинарный файл: на Mac только так она попадает под подпись приложения
+binaries = collect_dynamic_libs("livekit")
 if IS_MAC:
     binaries.append(("bin/govorilka-audiotap", "bin"))  # Swift-помощник, собирается заранее
 
@@ -31,6 +34,9 @@ a = Analysis(
         "govorilka.selftest",
         "av",
         "onnxruntime",
+        "soxr",
+        "livekit.rtc",
+        "livekit.rtc.resources",
     ],
     excludes=["torch", "matplotlib", "IPython", "pytest"],
     noarchive=False,

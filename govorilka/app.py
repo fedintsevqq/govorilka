@@ -21,7 +21,15 @@ from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_c
 from govorilka.config import DATA_DIR, FROZEN, SOURCE_MIC, SOURCE_SYSTEM, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
 from govorilka.filejob import CANCELLED, FILE_DIALOG_TYPES, FileJob
-from govorilka.hotkeys import HotkeyWatcher, format_chord, parse_chord
+from govorilka.hotkeys import (
+    HotkeyWatcher,
+    conflicts_with_language_switch,
+    format_chord,
+    input_monitoring_status,
+    parse_chord,
+    request_input_monitoring,
+    windows_language_switch,
+)
 from govorilka.indicator import NEUTRAL, OK, RECORDING, RecordingIndicator
 from govorilka.pipeline import TextEvent
 from govorilka.recognizer import RecognizerError
@@ -66,6 +74,10 @@ class App:
         root.minsize(720, 440)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build_ui()
+        self._check_input_monitoring()
+        self._check_language_switch()
+        self._repair_autostart()
+        self._check_legacy_instance()
         self.root.after(POLL_MS, self._poll)
 
     # ---------- интерфейс ----------
@@ -462,6 +474,40 @@ class App:
             self.hotkeys.set_chord(None)
             self.status_var.set(f"Горячая клавиша не включена: {exc}")
 
+    def _check_input_monitoring(self) -> None:
+        """macOS без «Мониторинга ввода» не отдаёт состояние клавиш: горячая клавиша молча не работает. Говорим сразу."""
+        if self.settings.hotkey_enabled and input_monitoring_status() is False:
+            request_input_monitoring()
+            self.status_var.set(
+                "Горячая клавиша не будет работать, пока Говорилка не включена в «Системные настройки → "
+                "Конфиденциальность и безопасность → Мониторинг ввода». После включения перезапустите приложение."
+            )
+
+    def _check_language_switch(self) -> None:
+        try:
+            chord = parse_chord(self.settings.hotkey)
+        except ValueError:
+            return
+        if self.settings.hotkey_enabled and conflicts_with_language_switch(chord, windows_language_switch()):
+            self.status_var.set(
+                f"{format_chord(chord)} у вас ещё и переключает язык ввода: при записи сменится раскладка. "
+                "Задайте другую комбинацию в настройках, например с буквой."
+            )
+
+    def _check_legacy_instance(self) -> None:
+        if single_instance.legacy_instance_suspected():
+            self.status_var.set(
+                "Похоже, ещё работает старая версия Говорилки. Закройте её (значок в панели задач или Dock), "
+                "иначе горячая клавиша сработает в обеих."
+            )
+
+    def _repair_autostart(self) -> None:
+        """Обновили или перенесли программу — автозапуск должен указывать на новое место, а не на удалённый файл."""
+        try:
+            autostart.refresh()
+        except OSError:
+            log.exception("Не получилось поправить автозапуск")
+
     def hotkey_toggle(self) -> None:
         """Старт или стоп записи по горячей клавише. Пока идёт запуск, остановка или расшифровка файла, игнорируем."""
         stopping = self.stopping is not None and self.stopping.is_alive()
@@ -475,7 +521,13 @@ class App:
         self.root.focus_force()
 
     def open_settings(self) -> None:
-        SettingsDialog(self.root, self.settings, autostart.is_enabled(), self._apply_settings)
+        SettingsDialog(
+            self.root,
+            self.settings,
+            autostart.is_enabled(),
+            self._apply_settings,
+            on_capture=lambda capturing: self.hotkeys.pause() if capturing else self.hotkeys.resume(),
+        )
 
     def _apply_settings(self, settings: Settings, autostart_on: bool) -> None:
         self.settings = settings
@@ -523,7 +575,11 @@ def main() -> None:
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         # у собранного приложения нет консоли — пишем лог в файл, чтобы было что прислать при сбое
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        logging.basicConfig(level=logging.INFO, format=log_format, filename=DATA_DIR / "govorilka.log", encoding="utf-8")
+        from logging.handlers import RotatingFileHandler
+
+        # лог не растёт бесконечно: 3 файла по 2 МБ хватает, чтобы разобрать любую проблему
+        handler = RotatingFileHandler(DATA_DIR / "govorilka.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        logging.basicConfig(level=logging.INFO, format=log_format, handlers=[handler])
     else:
         logging.basicConfig(level=logging.INFO, format=log_format)
     if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
@@ -548,6 +604,7 @@ def main() -> None:
     shown.append(app)
     if IS_MAC:
         root.createcommand("::tk::mac::ReopenApplication", app.show_window)  # клик по значку в Dock
+        root.createcommand("::tk::mac::Quit", app.on_close)  # Cmd+Q: иначе Tk выходит, не дописав запись
     if background:
         root.iconify()  # автозапуск: окно не выскакивает, работает горячая клавиша
     try:

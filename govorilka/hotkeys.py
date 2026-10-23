@@ -220,11 +220,56 @@ _MAC_CODES = {
 _MAC_NAMES = {code: name for name, code in _MAC_CODES.items()}
 
 
+_CORE_GRAPHICS = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+INPUT_MONITORING_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+
+
+def input_monitoring_status() -> bool | None:
+    """macOS: разрешила ли система читать клавиатуру («Мониторинг ввода»). None — не Mac или проверить нельзя.
+
+    Без этого разрешения macOS может отдавать «ничего не нажато», и горячая клавиша молча не работает.
+    """
+    if not IS_MAC:
+        return None
+    try:
+        preflight = ctypes.CDLL(_CORE_GRAPHICS).CGPreflightListenEventAccess
+    except (OSError, AttributeError):
+        return None
+    preflight.restype = ctypes.c_bool
+    return bool(preflight())
+
+
+def request_input_monitoring() -> None:
+    """Показывает системный запрос и добавляет Говорилку в список «Мониторинг ввода»."""
+    if not IS_MAC:
+        return
+    try:
+        request = ctypes.CDLL(_CORE_GRAPHICS).CGRequestListenEventAccess
+        request.restype = ctypes.c_bool
+        request()
+    except (OSError, AttributeError):
+        log.warning("Не получилось запросить «Мониторинг ввода»")
+
+
+def format_snapshot(snap: KeySnapshot, mac: bool = IS_MAC) -> str:
+    """Что сейчас нажато, словами: для живой подсказки в настройках."""
+    if not snap.mods and not snap.keys:
+        return "ничего"
+    names = (
+        {"ctrl": "Control", "alt": "Option", "shift": "Shift", "cmd": "Command"}
+        if mac
+        else {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "cmd": "Win"}
+    )
+    parts = [names[m] for m in MODIFIERS if m in snap.mods]
+    parts += sorted(k.upper() if k in KEYS else f"клавиша {k.removeprefix('vk')}" for k in snap.keys)
+    return " + ".join(parts)
+
+
 class MacKeyboard:
     """CoreGraphics напрямую через ctypes: для опроса состояния клавиш Swift-помощник не нужен."""
 
     def __init__(self) -> None:
-        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg = ctypes.CDLL(_CORE_GRAPHICS)
         self._flags = cg.CGEventSourceFlagsState
         self._flags.restype = ctypes.c_uint64
         self._flags.argtypes = [ctypes.c_int32]
@@ -241,6 +286,35 @@ class MacKeyboard:
             if code not in _MAC_MOD_CODES and self._key(0, code)
         )
         return KeySnapshot(mods, keys)
+
+
+# Windows: какое сочетание переключает язык ввода ("1" Alt+Shift — по умолчанию, "2" Ctrl+Shift, "3" нет)
+_WINDOWS_SWITCH = {"1": frozenset({"alt", "shift"}), "2": frozenset({"ctrl", "shift"})}
+
+
+def windows_language_switch() -> frozenset[str] | None:
+    """Модификаторы, которыми в Windows переключают язык ввода. None — не Windows, переключение выключено или не узнать."""
+    if not IS_WINDOWS:
+        return None
+    import winreg
+
+    value = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Keyboard Layout\Toggle") as key:
+            for name in ("Language Hotkey", "Hotkey"):
+                try:
+                    value = str(winreg.QueryValueEx(key, name)[0])
+                    break
+                except FileNotFoundError:
+                    continue
+    except OSError:
+        pass
+    return _WINDOWS_SWITCH.get(value or "1")
+
+
+def conflicts_with_language_switch(chord: Chord, switch: frozenset[str] | None) -> bool:
+    """Комбинация из одних модификаторов совпадает с переключением языка: при записи сменится и раскладка."""
+    return chord.key is None and switch is not None and chord.mods == switch
 
 
 def system_keyboard() -> Keyboard:
@@ -271,6 +345,7 @@ class HotkeyWatcher:
         self._keyboard = keyboard
         self._clock = clock or time.monotonic
         self._detector: HotkeyDetector | None = None
+        self._paused = threading.Event()  # пока в настройках записывают новую комбинацию, старая не должна срабатывать
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="hotkey-watcher", daemon=True)
@@ -283,6 +358,15 @@ class HotkeyWatcher:
         if self._thread.is_alive():
             self._thread.join(timeout=2)
 
+    def pause(self) -> None:
+        self._paused.set()
+
+    def resume(self) -> None:
+        with self._lock:  # начинаем с чистого листа: клавиши, зажатые во время паузы, не считаются нажатием
+            if self._detector is not None:
+                self._detector = HotkeyDetector(self._detector.chord, self._detector.hold_s)
+        self._paused.clear()
+
     def set_chord(self, chord: Chord | None) -> None:
         """None выключает горячую клавишу."""
         with self._lock:
@@ -293,7 +377,7 @@ class HotkeyWatcher:
         while not self._stop.wait(POLL_S):
             with self._lock:
                 detector = self._detector
-            if detector is None:
+            if detector is None or self._paused.is_set():
                 continue
             try:
                 if self._keyboard is None:

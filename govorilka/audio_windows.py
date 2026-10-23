@@ -8,7 +8,7 @@ import time
 
 import pyaudiowpatch as pyaudio
 
-from govorilka.audio_base import CHUNK_SECONDS, AudioChunk, AudioError, DeviceInfo, to_mono_16k
+from govorilka.audio_base import CHUNK_SECONDS, AudioChunk, AudioError, DeviceInfo, StreamResampler, int16_to_mono
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ class Capture:
     def __init__(self, pa: pyaudio.PyAudio, device: DeviceInfo, out: queue.Queue[AudioChunk]) -> None:
         self.device = device
         self._out = out
+        self._resampler = StreamResampler(device.rate)  # колбэк PortAudio один на поток, состояние не делится
         frames = int(device.rate * CHUNK_SECONDS)
         try:
             self._stream = pa.open(
@@ -84,7 +85,7 @@ class Capture:
 
     def _callback(self, in_data, frame_count, time_info, status):  # noqa: ANN001
         try:
-            samples = to_mono_16k(in_data, self.device.channels, self.device.rate)
+            samples = self._resampler.process(int16_to_mono(in_data, self.device.channels))
             start = time.monotonic() - frame_count / self.device.rate
             self._out.put_nowait(AudioChunk(samples, start))
         except queue.Full:

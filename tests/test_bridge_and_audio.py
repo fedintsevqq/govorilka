@@ -151,3 +151,25 @@ def test_own_install_beats_the_bundled_copy_and_bundled_is_the_fallback(tmp_path
     own.parent.mkdir(parents=True)
     own.write_text("")
     assert find_claude() == own  # свой установленный важнее
+
+
+def test_stream_resampler_keeps_length_and_has_no_seams():
+    from govorilka.audio_base import StreamResampler
+
+    rate, chunk = 48_000, 4_800
+    t = np.arange(rate * 3) / rate
+    tone = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    resampler = StreamResampler(rate)
+    out = np.concatenate([resampler.process(tone[i : i + chunk]) for i in range(0, len(tone), chunk)])
+    assert abs(len(out) - 16_000 * 3) < 800  # фильтр придерживает ~33 мс до следующего куска, остальное доходит
+    ideal = 0.5 * np.sin(2 * np.pi * 440 * np.arange(len(out)) / 16_000)
+    middle = slice(16_000, 32_000)  # первые сотни отсчётов — разгон фильтра
+    delay = min(range(200), key=lambda d: float(np.abs(out[16_000 + d : 32_000 + d] - ideal[middle]).mean()))
+    assert float(np.abs(out[16_000 + delay : 32_000 + delay] - ideal[middle]).max()) < 1e-3  # раньше на стыках было 0.0078
+
+
+def test_stream_resampler_passes_16k_through():
+    from govorilka.audio_base import StreamResampler
+
+    data = np.linspace(-1, 1, 1600, dtype=np.float32)
+    assert np.array_equal(StreamResampler(16_000).process(data), data)

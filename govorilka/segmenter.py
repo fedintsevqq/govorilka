@@ -35,6 +35,10 @@ class SegmenterParams:
     min_speech_s: float = 0.3  # короче — это щелчок или кашель
     preroll_s: float = 0.3  # захватываем немного звука до начала речи
     partial_every_s: float = 1.0
+    # Черновик распознаёт всю фразу целиком, поэтому на длинной фразе он дорожает. Интервал растёт вместе
+    # с фразой (0.2 × длина): до 5 секунд — каждую секунду, на 20-й секунде — раз в 4 с.
+    # На 20-секундном монологе это 88 секунд распознаваемого звука вместо 194.
+    partial_growth: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -104,7 +108,8 @@ class Segmenter:
             return self.flush()
         if len(self._frames) * self._frame_s >= self._p.max_segment_s:
             return [self._cut_long_segment()]
-        if self._since_partial * self._frame_s >= self._p.partial_every_s:
+        interval = max(self._p.partial_every_s, len(self._frames) * self._frame_s * self._p.partial_growth)
+        if self._since_partial * self._frame_s >= interval:
             self._since_partial = 0
             return [SegmentEvent("partial", _join(self._frames), self._start)]
         return []

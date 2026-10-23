@@ -15,3 +15,5 @@ transcripts/
 settings.json
 selftest.txt
 govorilka.log
+govorilka.lock
+govorilka.port

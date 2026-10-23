@@ -5,5 +5,7 @@ onnxruntime==1.23.2; sys_platform == "darwin" and platform_machine == "x86_64"
 numpy==2.5.4
 scipy==1.18.1
 av==19.0.2  # чтение аудио и видео (внутри ffmpeg)
+soxr==1.1.0  # пересчёт частоты звука потоком, без искажений на стыках кусков
+livekit==1.1.21  # модуль WebRTC: эхоподавление микрофона по звуку колонок
 PyAudioWPatch==0.2.12.9; sys_platform == "win32"
 comtypes==1.4.17; sys_platform == "win32"  # узнаём о смене наушников через Windows Core Audio

@@ -89,12 +89,12 @@ def test_save_settings_leaves_no_temp_file(tmp_path):
 
 
 class BrokenRecognizer:
-    def transcribe(self, audio):
+    def transcribe(self, audio, skip_if_busy=False):
         raise RuntimeError("onnx упал")
 
 
 class GoodRecognizer:
-    def transcribe(self, audio):
+    def transcribe(self, audio, skip_if_busy=False):
         return "текст"
 
 

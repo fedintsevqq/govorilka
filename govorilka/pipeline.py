@@ -69,12 +69,15 @@ class PhraseProcessor:
             self._emit("discard", self.speaker, "", event.start, end)
             return
         try:
-            text = self._recognizer.transcribe(event.audio)
+            # черновик не стоит в очереди за чужой финальной фразой: модель занята — просто пропускаем
+            text = self._recognizer.transcribe(event.audio, skip_if_busy=event.kind == "partial")
         except Exception:  # одна сломанная фраза не должна ронять запись
             log.exception("Ошибка распознавания (%s)", self.speaker)
             if event.kind == "final":
                 self._report_failure()
                 self._emit("discard", self.speaker, "", event.start, end)
+            return
+        if text is None:  # черновик пропущен
             return
         if event.kind == "final":
             self._failures = 0
@@ -122,8 +125,10 @@ class SourcePipeline:
         detector: SpeechDetector,
         session_t0: float,
         on_level: LevelCallback = lambda *_: None,
+        prepare: Callable[[AudioChunk], AudioChunk] | None = None,
     ) -> None:
         self.processor = processor
+        self._prepare = prepare  # например, эхоподавление микрофона до нарезки на фразы
         self.queue: queue.Queue[AudioChunk] = queue.Queue(maxsize=QUEUE_LIMIT)
         self._t0 = session_t0
         self._on_level = on_level
@@ -156,6 +161,12 @@ class SourcePipeline:
             log.exception("Ошибка при закрытии последней фразы (%s)", self.processor.source)
 
     def _process(self, chunk: AudioChunk) -> None:
+        if self._prepare is not None:
+            try:
+                chunk = self._prepare(chunk)
+            except Exception:  # обработка сломалась — дальше пишем звук как есть, но не теряем его
+                log.exception("Предобработка звука отключена (%s)", self.processor.source)
+                self._prepare = None
         self._on_level(self.processor.source, float(np.abs(chunk.samples).max(initial=0.0)))
         # если распознавание отстаёт или запись останавливается, черновики пропускаем — финальные фразы важнее
         skip_partials = self._stop.is_set() or self.queue.qsize() > 5

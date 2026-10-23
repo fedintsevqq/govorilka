@@ -1,3 +1,4 @@
+import gc
 import socket
 import sys
 import time
@@ -164,7 +165,8 @@ def test_windows_sees_injected_keys_and_hotkey_fires():
 
     user32 = ctypes.windll.user32
     keyboard = WindowsKeyboard()
-    assert keyboard.snapshot() == KeySnapshot()
+    if keyboard.snapshot() != KeySnapshot():
+        pytest.skip("на клавиатуре прямо сейчас кто-то печатает — тест читает настоящие клавиши")
     pressed = []
     try:
         for vk in (0x11, 0x10, 0x87):  # Ctrl, Shift, F24
@@ -180,9 +182,9 @@ def test_windows_sees_injected_keys_and_hotkey_fires():
     time.sleep(0.15)
     if seen == KeySnapshot():
         pytest.skip("в этой сессии Windows программные нажатия клавиш не видны (например, служба без рабочего стола)")
-    assert seen.mods == {"ctrl", "shift"} and seen.keys == {"f24"}
-    assert fired
-    assert keyboard.snapshot() == KeySnapshot()
+    assert {"ctrl", "shift"} <= seen.mods and "f24" in seen.keys
+    assert fired or seen.mods != {"ctrl", "shift"}  # если человек нажал что-то своё, комбинация законно не сработала
+    assert "f24" not in keyboard.snapshot().keys
 
 
 # ---------- автозапуск ----------
@@ -236,32 +238,76 @@ def test_launch_command_for_source_runs_the_module():
 # ---------- один экземпляр ----------
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def test_second_instance_is_refused_and_asks_first_to_show():
-    port, shown = free_port(), []
-    first = single_instance.acquire(lambda: shown.append(1), port=port)
+def test_second_instance_is_refused_and_asks_first_to_show(tmp_path):
+    shown = []
+    first = single_instance.acquire(lambda: shown.append(1), folder=tmp_path)
     assert first is not None
-    second = single_instance.acquire(lambda: shown.append(2), port=port)
-    assert second is None
+    assert single_instance.acquire(lambda: shown.append(2), folder=tmp_path) is None
     assert wait_for(lambda: shown == [1])
     first.close()
-    third = single_instance.acquire(lambda: None, port=port)  # после выхода первой копии место свободно
+    third = single_instance.acquire(lambda: None, folder=tmp_path)  # после выхода первой копии место свободно
     assert third is not None
     third.close()
 
 
-def test_background_second_instance_does_not_raise_the_window():
-    port, shown = free_port(), []
-    first = single_instance.acquire(lambda: shown.append(1), port=port)
-    assert single_instance.acquire(lambda: None, port=port, notify_existing=False) is None
+def test_background_second_instance_does_not_raise_the_window(tmp_path):
+    shown = []
+    first = single_instance.acquire(lambda: shown.append(1), folder=tmp_path)
+    assert single_instance.acquire(lambda: None, folder=tmp_path, notify_existing=False) is None
     time.sleep(0.2)
     assert shown == []
     first.close()
+
+
+def test_foreign_program_on_the_old_port_does_not_block_startup(tmp_path):
+    with socket.socket() as squatter:  # кто-то занял порт, который раньше был фиксированным
+        squatter.bind(("127.0.0.1", 47653)) if _port_free(47653) else None
+        lock = single_instance.acquire(lambda: None, folder=tmp_path)
+        assert lock is not None
+        lock.close()
+
+
+def _port_free(port):
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def test_copy_in_another_process_holds_the_lock(tmp_path):
+    import subprocess
+    import textwrap
+
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""
+                import sys, time
+                from pathlib import Path
+                from govorilka import single_instance
+                lock = single_instance.acquire(lambda: None, folder=Path(r"{tmp_path}"))
+                print("locked" if lock else "busy", flush=True)
+                time.sleep(30)
+                """
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "locked"
+        assert single_instance.acquire(lambda: None, folder=tmp_path, notify_existing=False) is None
+    finally:
+        holder.kill()
+        holder.wait()
+    # программа «упала» — замок снят системой, можно запускаться
+    lock = single_instance.acquire(lambda: None, folder=tmp_path)
+    assert lock is not None
+    lock.close()
 
 
 # ---------- окна ----------
@@ -276,6 +322,9 @@ def root():
     window.withdraw()
     yield window
     window.destroy()
+    # переменные Tk удаляем здесь, в главном потоке: иначе сборщик мусора доберётся до них в потоке записи
+    # следующего теста, и Tk будет ждать главный цикл, которого в тестах нет (тормоза и предупреждение)
+    gc.collect()
 
 
 def test_indicator_shows_updates_and_hides(root):

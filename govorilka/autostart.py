@@ -65,6 +65,44 @@ def is_enabled(run_key: str = WINDOWS_RUN_KEY, agent_path: Path | None = None) -
     return False
 
 
+def registered_command(run_key: str = WINDOWS_RUN_KEY, agent_path: Path | None = None) -> str | None:
+    """Что сейчас записано в автозапуске (строкой). None — автозапуск выключен."""
+    if sys.platform == "win32":
+        import winreg
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key) as key:
+                value, _ = winreg.QueryValueEx(key, APP_NAME)
+            return str(value)
+        except FileNotFoundError:
+            return None
+    if sys.platform == "darwin":
+        path = agent_path or launch_agent_path()
+        try:
+            arguments = plistlib.loads(path.read_bytes()).get("ProgramArguments", [])
+        except (OSError, plistlib.InvalidFileException):
+            return None
+        return subprocess.list2cmdline([str(a) for a in arguments])
+    return None
+
+
+def refresh(
+    command: list[str] | None = None, run_key: str = WINDOWS_RUN_KEY, agent_path: Path | None = None
+) -> bool:
+    """Если автозапуск включён, но указывает на старое место (обновили или перенесли программу), чиним.
+
+    Файлы релизов называются по версии (Govorilka-0.2.1-…exe), поэтому после каждого обновления
+    прежняя запись вела бы на удалённый файл. True — запись поправили.
+    """
+    command = command or launch_command()
+    current = registered_command(run_key, agent_path)
+    if current is None or current == subprocess.list2cmdline(command):
+        return False
+    set_enabled(True, command, run_key, agent_path)
+    log.info("Автозапуск указывал на %s, теперь на %s", current, command)
+    return True
+
+
 def set_enabled(
     enabled: bool,
     command: list[str] | None = None,

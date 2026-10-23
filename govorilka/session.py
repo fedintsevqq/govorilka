@@ -15,7 +15,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from govorilka.audio import AudioError, AudioSystem, Capture
+from govorilka.aec import EchoCanceller, ReferenceTee
+from govorilka.audio import AudioChunk, AudioError, AudioSystem, Capture
 from govorilka.audio_base import PermissionDeniedError
 from govorilka.config import SOURCE_MIC, SOURCE_SYSTEM, SPEAKER_ME, SPEAKER_OTHERS, Settings
 from govorilka.echo import is_echo
@@ -36,6 +37,7 @@ class _Source:
     name: str  # SOURCE_MIC / SOURCE_SYSTEM
     find_device: str  # метод AudioSystem: default_mic / default_loopback
     pipeline: SourcePipeline
+    capture_queue: object  # куда захват кладёт звук: очередь конвейера или «тройник» для эхоподавления
     capture: Capture | None = None
 
 
@@ -65,6 +67,7 @@ class Session:
         self._watcher: threading.Thread | None = None
         self._device_lock = threading.Lock()  # переподключение и остановка не должны пересекаться
         self._closed = False
+        self._canceller: EchoCanceller | None = None
         self._last_retry = 0.0
         self._last_notice = ""
         self._lock = threading.Lock()
@@ -76,6 +79,8 @@ class Session:
 
     def start(self) -> None:
         t0 = time.monotonic()
+        if self._settings.echo_filter and self._settings.capture_mic and self._settings.capture_system:
+            self._canceller = self._make_canceller()
         try:
             if self._settings.capture_mic:
                 self._add_source(SOURCE_MIC, SPEAKER_ME, "default_mic", t0, diarize=False)
@@ -98,9 +103,27 @@ class Session:
         processor = PhraseProcessor(
             name, speaker, self._engines.recognizer, self._handle_text, diarizer, on_problem=self._notify
         )
-        pipeline = SourcePipeline(processor, self._engines.vad.detector(), t0, self._on_level)
+        canceller = self._canceller
+        prepare = None
+        if canceller is not None and name == SOURCE_MIC:
+            def prepare(chunk: AudioChunk) -> AudioChunk:
+                cleaned, start = canceller.process(chunk.samples, chunk.t)
+                return AudioChunk(cleaned, start)
+        pipeline = SourcePipeline(processor, self._engines.vad.detector(), t0, self._on_level, prepare)
         pipeline.start()
-        self._sources.append(_Source(name, find_device, pipeline))
+        capture_queue = (
+            ReferenceTee(pipeline.queue, canceller) if canceller is not None and name == SOURCE_SYSTEM else pipeline.queue
+        )
+        self._sources.append(_Source(name, find_device, pipeline, capture_queue))
+
+    def _make_canceller(self) -> EchoCanceller | None:
+        """Эхоподавление нужно, только когда пишутся и микрофон, и колонки. Не завелось — работаем без него."""
+        try:
+            return EchoCanceller()
+        except Exception as exc:  # нет нативной библиотеки на этой системе и т. п.
+            log.exception("Эхоподавление недоступно")
+            self._notify(f"Эхоподавление недоступно ({exc}), повторы убирает только текстовый фильтр")
+            return None
 
     def _open_captures(self) -> list[tuple[str, AudioError]]:
         """Открывает то, что ещё не открыто. Сбой одного источника не мешает другому."""
@@ -114,7 +137,7 @@ class Session:
                 break
             try:
                 device = getattr(self._audio, source.find_device)()
-                source.capture = self._audio.open_capture(device, source.pipeline.queue)
+                source.capture = self._audio.open_capture(device, source.capture_queue)
             except AudioError as exc:
                 errors.append((source.pipeline.processor.speaker, exc))
         self.device_names = [

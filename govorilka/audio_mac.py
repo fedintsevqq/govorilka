@@ -22,7 +22,7 @@ from govorilka.audio_base import (
     AudioError,
     DeviceInfo,
     PermissionDeniedError,
-    resample_mono,
+    StreamResampler,
 )
 from govorilka.config import AUDIOTAP_PATH
 
@@ -131,6 +131,7 @@ class HelperCapture:
     def _read_audio(self) -> None:
         assert self._proc.stdout is not None
         frame_bytes = int(TAP_RATE * CHUNK_SECONDS) * 4
+        resampler = StreamResampler(TAP_RATE)
         while True:
             data = self._proc.stdout.read(frame_bytes)
             if not data:
@@ -139,7 +140,7 @@ class HelperCapture:
             samples = np.frombuffer(data[:usable], dtype=np.float32)
             start = time.monotonic() - len(samples) / TAP_RATE
             try:
-                self._out.put_nowait(AudioChunk(resample_mono(samples, TAP_RATE), start))
+                self._out.put_nowait(AudioChunk(resampler.process(samples), start))
             except queue.Full:
                 log.warning("Очередь звука переполнена, кусок пропущен (%s)", self.device.name)
 

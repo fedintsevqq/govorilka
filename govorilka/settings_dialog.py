@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import time
 import tkinter as tk
 from collections.abc import Callable
@@ -11,17 +12,26 @@ from tkinter import filedialog, messagebox, ttk
 from govorilka.config import MODELS, Settings
 from govorilka.hotkeys import (
     HOLD_S,
+    INPUT_MONITORING_URL,
+    IS_MAC,
     Chord,
     ChordRecorder,
+    Keyboard,
     chord_to_string,
+    conflicts_with_language_switch,
     format_chord,
+    format_snapshot,
+    input_monitoring_status,
     parse_chord,
+    request_input_monitoring,
     system_keyboard,
+    windows_language_switch,
 )
 from govorilka.transcript_view import FONT, FONT_SIZE
 
 CAPTURE_TIMEOUT_S = 10.0
 CAPTURE_POLL_MS = 40
+LIVE_POLL_MS = 100
 
 
 class SettingsDialog(tk.Toplevel):
@@ -31,6 +41,7 @@ class SettingsDialog(tk.Toplevel):
         settings: Settings,
         autostart_enabled: bool,
         on_save: Callable[[Settings, bool], None],
+        on_capture: Callable[[bool], None] = lambda _: None,
     ) -> None:
         super().__init__(parent)
         self.title("Настройки")
@@ -38,6 +49,8 @@ class SettingsDialog(tk.Toplevel):
         self.transient(parent)
         self._settings = settings
         self._on_save = on_save
+        self._on_capture = on_capture  # True — начали записывать комбинацию (фоновую клавишу на паузу), False — закончили
+        self._keyboard: Keyboard | None = None
         self._chord = self._load_chord(settings.hotkey)
         self._recorder: ChordRecorder | None = None
         self._deadline = 0.0
@@ -77,7 +90,19 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(frame, textvariable=self.hotkey_hint, foreground="gray").grid(
             row=row + 2, column=0, columnspan=2, sticky="w"
         )
-        row += 3
+        self.live_keys = tk.StringVar(value="Сейчас нажато: …")
+        ttk.Label(frame, textvariable=self.live_keys).grid(row=row + 3, column=0, columnspan=2, sticky="w")
+        row += 4
+        if input_monitoring_status() is False:
+            # без «Мониторинга ввода» macOS не отдаёт состояние клавиш: комбинацию не записать и в фоне она не сработает
+            ttk.Label(
+                frame,
+                text="macOS не даёт Говорилке видеть клавиши. Включите её в «Мониторинге ввода» и перезапустите.",
+                foreground="#cf222e",
+                wraplength=560,
+            ).grid(row=row, column=0, sticky="w", pady=(4, 0))
+            ttk.Button(frame, text="Открыть", command=self._open_input_monitoring).grid(row=row, column=1, padx=4)
+            row += 1
 
         self.autostart_var = tk.BooleanVar(value=autostart_enabled)
         ttk.Checkbutton(frame, text="Запускать Говорилку при входе в систему (свёрнутой)", variable=self.autostart_var).grid(
@@ -102,6 +127,7 @@ class SettingsDialog(tk.Toplevel):
         buttons.grid(row=row + 3, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(buttons, text="Отмена", command=self.destroy).pack(side="right")
         ttk.Button(buttons, text="Сохранить", command=self._save).pack(side="right", padx=6)
+        self.after(LIVE_POLL_MS, self._poll_live_keys)
 
     @staticmethod
     def _load_chord(text: str) -> Chord:
@@ -123,15 +149,39 @@ class SettingsDialog(tk.Toplevel):
         if chosen:
             var.set(chosen)
 
+    # ---------- что нажато прямо сейчас ----------
+
+    def _get_keyboard(self) -> Keyboard:
+        if self._keyboard is None:
+            self._keyboard = system_keyboard()
+        return self._keyboard
+
+    def _poll_live_keys(self) -> None:
+        if not self.winfo_exists():
+            return
+        try:
+            self.live_keys.set(f"Сейчас нажато: {format_snapshot(self._get_keyboard().snapshot())}")
+        except Exception as exc:  # noqa: BLE001 — показываем причину прямо в окне, это и есть диагностика
+            self.live_keys.set(f"Клавиши не читаются: {exc}")
+            self.after(LIVE_POLL_MS * 10, self._poll_live_keys)  # сбой мог быть разовым: пробуем снова, но реже
+            return
+        self.after(LIVE_POLL_MS, self._poll_live_keys)
+
+    def _open_input_monitoring(self) -> None:
+        request_input_monitoring()
+        if IS_MAC:
+            subprocess.run(["open", INPUT_MONITORING_URL], check=False)
+
     # ---------- запись комбинации ----------
 
     def _start_capture(self) -> None:
         try:
-            keyboard = system_keyboard()
+            keyboard = self._get_keyboard()
             keyboard.snapshot()  # заранее проверяем, что чтение клавиш вообще работает
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Говорилка", f"Не получилось читать клавиши: {exc}", parent=self)
             return
+        self._on_capture(True)
         self._recorder = ChordRecorder()
         self._deadline = time.monotonic() + CAPTURE_TIMEOUT_S
         self.hotkey_btn.configure(state="disabled", text="Нажмите…")
@@ -149,16 +199,27 @@ class SettingsDialog(tk.Toplevel):
         if chord is not None:
             self._chord = chord
             self.hotkey_text.set(format_chord(chord))
-            self._finish_capture(f"Задано: {format_chord(chord)}")
+            note = ""
+            if conflicts_with_language_switch(chord, windows_language_switch()):
+                note = " Внимание: у вас это же сочетание переключает язык ввода, лучше выбрать другое."
+            self._finish_capture(f"Задано: {format_chord(chord)}.{note}")
         elif time.monotonic() > self._deadline:
             self._finish_capture("Комбинацию не нажали, оставил прежнюю.")
         else:
             self.after(CAPTURE_POLL_MS, lambda: self._poll_capture(keyboard))
 
     def _finish_capture(self, message: str) -> None:
+        if self._recorder is not None:
+            self._on_capture(False)
         self._recorder = None
         self.hotkey_btn.configure(state="normal", text="Изменить…")
         self.hotkey_hint.set(message)
+
+    def destroy(self) -> None:
+        if self._recorder is not None:  # закрыли окно посреди записи комбинации — вернуть фоновую клавишу
+            self._recorder = None
+            self._on_capture(False)
+        super().destroy()
 
     # ---------- сохранение ----------
 

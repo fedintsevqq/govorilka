@@ -29,12 +29,23 @@ class Recognizer:
             self._model = onnx_asr.load_model(model_name, models.local_dir(model_name), providers=models.CPU)
         except Exception as exc:  # onnx-asr бросает свои исключения и ошибки сети
             raise RecognizerError(f"Не загрузил модель {model_name}: {exc}") from exc
-        self._lock = threading.Lock()
+        # Сессии onnxruntime можно вызывать из нескольких потоков сразу (проверено: результат тот же),
+        # поэтому микрофон и собеседники распознаются параллельно. Счётчик нужен только черновикам.
+        self._busy = 0
+        self._busy_lock = threading.Lock()
         self.model_name = model_name
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, skip_if_busy: bool = False) -> str | None:
+        """Текст фразы. skip_if_busy — для черновиков: если модель уже занята, вернуть None и не ждать."""
         if audio.size < SAMPLE_RATE // 10:
             return ""
-        with self._lock:
+        with self._busy_lock:
+            if skip_if_busy and self._busy:
+                return None
+            self._busy += 1
+        try:
             text = self._model.recognize(audio.astype(np.float32, copy=False), sample_rate=SAMPLE_RATE)
+        finally:
+            with self._busy_lock:
+                self._busy -= 1
         return str(text).strip()

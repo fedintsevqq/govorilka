@@ -1,3 +1,4 @@
+import gc
 import tkinter as tk
 from types import SimpleNamespace
 
@@ -74,6 +75,7 @@ def view():
     root.withdraw()
     yield TranscriptView(root)
     root.destroy()
+    gc.collect()  # см. test_hotkeys.root: переменные Tk удаляем в главном потоке
 
 
 def _lines(view):
@@ -128,3 +130,18 @@ def test_palettes_have_readable_contrast():
 def test_view_sets_explicit_text_color(view):
     assert view.text.cget("fg") in (view.palette.text, view.palette.text.upper())
     assert detect_palette(view.text.master) in (LIGHT, DARK)
+
+
+def test_partials_get_rarer_on_long_phrases():
+    """Черновик распознаёт фразу целиком, поэтому на длинной фразе его частота падает: работы в 2 с лишним раза меньше."""
+
+    def partial_seconds(params):
+        events = _feed(Segmenter(params), np.concatenate([tone(20.0), np.zeros(SR, dtype=np.float32)]))
+        return sum(len(e.audio) for e in events if e.kind == "partial") / SR
+
+    before = partial_seconds(SegmenterParams(partial_growth=0.0))  # как было: черновик каждую секунду
+    after = partial_seconds(SegmenterParams())
+    print(f"черновики на 20 с речи: было {before:.0f} с звука, стало {after:.0f} с")
+    assert after < before / 2
+    events = _feed(Segmenter(), tone(3.0))
+    assert sum(e.kind == "partial" for e in events) >= 2  # короткие фразы по-прежнему обновляются каждую секунду
