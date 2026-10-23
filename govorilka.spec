@@ -21,8 +21,11 @@ datas += [("govorilka/qml", "govorilka/qml"), ("govorilka/assets", "govorilka/as
 def qt_qml_modules():
     """Модули QML, которые нужны нашим окнам. PyInstaller сам по QML-файлам их не находит."""
     import PySide6
+    from PySide6.QtCore import QLibraryInfo
 
-    base = os.path.join(os.path.dirname(PySide6.__file__), "qml")
+    # на Windows это PySide6/qml, на Mac — PySide6/Qt/qml: спрашиваем у самого Qt
+    package = os.path.dirname(PySide6.__file__)
+    base = QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)
     wanted = ["QtQml", "QtQuick/Window", "QtQuick/Layouts", "QtQuick/Shapes", "QtQuick/Effects", "QtQuick/Dialogs",
               "QtQuick/Templates", "QtQuick/Controls/Basic", "QtQuick/Controls/impl"]
     found = []
@@ -32,14 +35,13 @@ def qt_qml_modules():
             continue
         for root, _dirs, files in os.walk(folder):
             for name in files:
-                relative = os.path.relpath(root, os.path.dirname(PySide6.__file__))
-                found.append((os.path.join(root, name), os.path.join("PySide6", relative)))
+                found.append((os.path.join(root, name), os.path.join("PySide6", os.path.relpath(root, package))))
     for top in ("QtQuick", "QtQuick/Controls"):  # файлы верхнего уровня (qmldir, плагин), без вложенных стилей
         folder = os.path.join(base, *top.split("/"))
         for name in os.listdir(folder):
             full = os.path.join(folder, name)
             if os.path.isfile(full):
-                found.append((full, os.path.join("PySide6", "qml", *top.split("/"))))
+                found.append((full, os.path.join("PySide6", os.path.relpath(folder, package))))
     return found
 
 
