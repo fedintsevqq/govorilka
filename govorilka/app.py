@@ -14,8 +14,9 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from govorilka import autostart, single_instance
+from govorilka import autostart, permissions, single_instance
 from govorilka.audio import AudioError
+from govorilka.audio_base import PermissionDeniedError
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.config import DATA_DIR, FROZEN, SOURCE_MIC, SOURCE_SYSTEM, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
@@ -169,6 +170,9 @@ class App:
                 on_notice=lambda message: self.events.put(("status", message)),
             )
             session.start()
+        except PermissionDeniedError as exc:
+            self.events.put(("permission", exc))
+            return
         except (AudioError, RecognizerError) as exc:
             self.events.put(("error", str(exc)))
             return
@@ -271,6 +275,12 @@ class App:
             self.hotkey_toggle()
         elif kind == "show":
             self.show_window()
+        elif kind == "permission":
+            self._starting = False
+            self.indicator.hide()
+            self._set_idle()
+            self.status_var.set(str(payload))
+            self.root.after_idle(lambda: self._offer_permission_reset(payload))  # type: ignore[arg-type]
         elif kind == "error":
             self._starting = False
             self.indicator.hide()
@@ -327,6 +337,28 @@ class App:
         """Диалог модальный и крутит свой цикл, поэтому показываем его не из _poll, иначе метры и текст замерзают."""
         show = messagebox.showerror if level == "error" else messagebox.showwarning
         self.root.after_idle(lambda: show("Говорилка", message))
+
+    def _offer_permission_reset(self, error: PermissionDeniedError) -> None:
+        """macOS отказала в доступе. Часто причина в устаревшей записи после обновления: предлагаем её сбросить."""
+        if not permissions.can_reset():
+            messagebox.showerror("Говорилка", str(error))
+            return
+        answer = messagebox.askyesno(
+            "Говорилка",
+            f"{error}\n\n"
+            "Если доступ уже включён, а ошибка повторяется, в списке осталась запись от прежней "
+            "версии приложения: система считает, что новой версии доступ не давали.\n\n"
+            "Сбросить разрешение и закрыть Говорилку? При следующем запуске macOS спросит доступ заново, "
+            "нажмите «Разрешить» и откройте приложение ещё раз.",
+        )
+        if not answer:
+            return
+        failure = permissions.reset_permission(error.service)
+        if failure:
+            messagebox.showerror("Говорилка", f"Не получилось сбросить разрешение: {failure}")
+            return
+        messagebox.showinfo("Говорилка", "Готово. Откройте Говорилку заново и разрешите доступ, когда macOS спросит.")
+        self.on_close()
 
     def _set_idle(self) -> None:
         self.partials.clear()

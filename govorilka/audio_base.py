@@ -32,6 +32,14 @@ class AudioError(RuntimeError):
     pass
 
 
+class PermissionDeniedError(AudioError):
+    """macOS не дала доступ к звуку. service — имя службы для `tccutil reset`: ScreenCapture или Microphone."""
+
+    def __init__(self, service: str, message: str) -> None:
+        super().__init__(message)
+        self.service = service
+
+
 class Capture(Protocol):
     device: DeviceInfo
 

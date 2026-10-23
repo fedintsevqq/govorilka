@@ -5,6 +5,7 @@
 // Завершается, когда закрывается stdin (родительский процесс остановил запись или упал).
 
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -143,15 +144,51 @@ let source = arguments.firstIndex(of: "--source").flatMap { $0 + 1 < arguments.c
 let systemTap = SystemTap()
 let micTap = MicTap()
 
+/// Приложение показывает разные сообщения для «нет разрешения» и для остальных сбоев, поэтому различаем их здесь.
+/// Строка "error: permission: <служба>: подробности" означает отказ в доступе, всё прочее — другую причину.
+func failSystem(_ error: Error) -> Never {
+    let code = (error as NSError).code
+    // -3801 — SCStreamError.userDeclined; запасной признак — система сама говорит, что доступа к записи нет
+    if code == -3801 || !CGPreflightScreenCaptureAccess() {
+        _ = CGRequestScreenCaptureAccess()  // показывает системный запрос и вносит приложение в список настроек
+        report("error: permission: screen: \(error.localizedDescription) (code \(code))")
+    } else {
+        report("error: \(error.localizedDescription) (code \(code))")
+    }
+    exit(1)
+}
+
+func startMic() {
+    do {
+        try micTap.start()
+        report("ready")
+    } catch {
+        report("error: \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
 switch source {
 case "mic":
     DispatchQueue.main.async {
-        do {
-            try micTap.start()
-            report("ready")
-        } catch {
-            report("error: \(error.localizedDescription)")
+        // без проверки доступа AVAudioEngine при отказе не падает, а молча отдаёт тишину
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            report("error: permission: microphone: доступ запрещён в настройках")
             exit(1)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        startMic()
+                    } else {
+                        report("error: permission: microphone: пользователь отказал в доступе")
+                        exit(1)
+                    }
+                }
+            }
+        default:
+            startMic()
         }
     }
 case "system":
@@ -160,8 +197,7 @@ case "system":
             try await systemTap.start()
             report("ready")
         } catch {
-            report("error: \(error.localizedDescription)")
-            exit(1)
+            failSystem(error)
         }
     }
 default:

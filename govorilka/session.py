@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from govorilka.audio import AudioError, AudioSystem, Capture
+from govorilka.audio_base import PermissionDeniedError
 from govorilka.config import SOURCE_MIC, SOURCE_SYSTEM, SPEAKER_ME, SPEAKER_OTHERS, Settings
 from govorilka.echo import is_echo
 from govorilka.engines import Engines
@@ -81,8 +82,10 @@ class Session:
             if self._settings.capture_system:
                 self._add_source(SOURCE_SYSTEM, SPEAKER_OTHERS, "default_loopback", t0, self._settings.split_speakers)
             errors = self._open_captures()
-            if errors:  # при старте любая неудача — ошибка, как раньше
-                raise AudioError("; ".join(errors))
+            if errors:  # при старте любая неудача — ошибка
+                # отказ в доступе отдаём как есть: окно предложит сбросить разрешение
+                denied = next((exc for _, exc in errors if isinstance(exc, PermissionDeniedError)), None)
+                raise denied or AudioError("; ".join(f"{speaker}: {exc}" for speaker, exc in errors))
         except Exception:  # не оставляем открытыми уже запущенные потоки и устройства
             self.stop()
             raise
@@ -99,7 +102,7 @@ class Session:
         pipeline.start()
         self._sources.append(_Source(name, find_device, pipeline))
 
-    def _open_captures(self) -> list[str]:
+    def _open_captures(self) -> list[tuple[str, AudioError]]:
         """Открывает то, что ещё не открыто. Сбой одного источника не мешает другому."""
         if self._audio is None:
             self._audio = AudioSystem()
@@ -113,7 +116,7 @@ class Session:
                 device = getattr(self._audio, source.find_device)()
                 source.capture = self._audio.open_capture(device, source.pipeline.queue)
             except AudioError as exc:
-                errors.append(f"{source.pipeline.processor.speaker}: {exc}")
+                errors.append((source.pipeline.processor.speaker, exc))
         self.device_names = [
             f"{s.pipeline.processor.speaker}: {s.capture.device.name}" for s in self._sources if s.capture
         ]
@@ -166,9 +169,9 @@ class Session:
                 errors = self._open_captures()
             except Exception as exc:  # например, не поднялась звуковая система
                 log.exception("Не удалось переподключить устройства")
-                errors = [str(exc)]
+                errors = [("", AudioError(str(exc)))]
         if errors:
-            self._notify(f"Запись: {reason}, устройство пока недоступно ({'; '.join(errors)}). Пробую снова…")
+            self._notify(f"Запись: {reason}, устройство пока недоступно ({'; '.join(f'{speaker}: {exc}' if speaker else str(exc) for speaker, exc in errors)}). Пробую снова…")
         else:
             self._notify(f"Запись: {reason}, переключился → {'; '.join(self.device_names)}")
 

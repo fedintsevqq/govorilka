@@ -13,12 +13,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from govorilka.config import FROZEN
+from govorilka.config import BUNDLE_ID, FROZEN
 
 log = logging.getLogger(__name__)
 
 APP_NAME = "Govorilka"
-LAUNCH_AGENT_ID = "io.github.fedintsevqq.govorilka"
+LAUNCH_AGENT_ID = BUNDLE_ID
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 BACKGROUND_FLAG = "--background"
 

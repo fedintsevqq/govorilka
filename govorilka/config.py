@@ -14,6 +14,7 @@ from govorilka.hotkeys import DEFAULT_HOTKEY
 log = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).resolve().parent.parent
+BUNDLE_ID = "io.github.fedintsevqq.govorilka"  # тот же, что в govorilka.spec: по нему macOS помнит разрешения
 FROZEN = bool(getattr(sys, "frozen", False))  # запущены из собранного .exe / .app
 
 
