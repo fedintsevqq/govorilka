@@ -639,3 +639,35 @@ def test_reset_all_from_the_app_quits_only_when_everything_was_reset(backend, qa
     monkeypatch.setattr(permissions, "reset_all", lambda: ["Microphone: не вышло"])
     backend.resetAllPermissions()
     assert toasts == ["error"]  # не вышло — не закрываем приложение, человек видит причину
+
+
+def test_microphone_and_automation_statuses_are_decoded():
+    from govorilka import permissions
+
+    assert permissions.decode_microphone(3) is True  # разрешено
+    assert permissions.decode_microphone(2) is False and permissions.decode_microphone(1) is False
+    assert permissions.decode_microphone(0) is None and permissions.decode_microphone(None) is None
+    assert permissions.decode_automation(0) is True and permissions.decode_automation(-1743) is False
+    assert permissions.decode_automation(-1744) is None and permissions.decode_automation(-600) is None
+
+
+def test_allow_button_asks_first_then_opens_the_pane_only_if_still_not_granted(backend, qapp, monkeypatch):
+    from govorilka import permissions
+    from govorilka.qt import backend as backend_module
+    from conftest import pump
+
+    asked, opened = [], []
+    monkeypatch.setattr(permissions, "request", asked.append)
+    monkeypatch.setattr(backend_module.QDesktopServices, "openUrl", staticmethod(lambda url: opened.append(url.toString())))
+    monkeypatch.setattr(permissions, "access_status", lambda: {"screen": False})
+    backend.requestAccess("screen")
+    assert pump(qapp, lambda: opened)
+    assert asked == ["screen"] and opened[0].endswith("Privacy_ScreenCapture")
+    opened.clear()
+    monkeypatch.setattr(permissions, "access_status", lambda: {"microphone": True})
+    backend.requestAccess("microphone")
+    assert pump(qapp, lambda: asked.count("microphone") == 1)
+    pump(qapp, lambda: False, timeout=0.3)
+    assert opened == []  # разрешили в ответ на запрос: раздел настроек открывать не нужно
+    backend.requestAccess("нет-такого")  # неизвестная служба игнорируется
+    assert "нет-такого" not in asked

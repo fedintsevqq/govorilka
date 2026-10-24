@@ -187,6 +187,7 @@ class Backend(QObject):
             (self._release_in, self.hotkeyReleased),
             (self._finished_in, self._on_finished),
             (self._ai_in, self._on_ai_result),
+            (self._access_done, self._on_access_done),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -498,6 +499,28 @@ class Backend(QObject):
     @safe_slot
     def refreshAccess(self) -> None:  # noqa: N802
         self.accessChanged.emit()
+
+    _access_done = Signal(str)
+
+    @Slot(str)
+    @safe_slot
+    def requestAccess(self, key: str) -> None:  # noqa: N802
+        """Кнопка «Разрешить»: показать системный запрос (если macOS ещё не спрашивала), затем, если доступа так и нет,
+        открыть нужный раздел настроек. Запрос ждёт ответа человека, поэтому идёт в фоне."""
+        if key not in {row[0] for row in permissions.ACCESS_ROWS}:
+            return
+
+        def work() -> None:
+            permissions.request(key)
+            self._access_done.emit(key)
+
+        threading.Thread(target=work, name=f"access-{key}", daemon=True).start()
+
+    def _on_access_done(self, key: str) -> None:
+        self.accessChanged.emit()
+        if permissions.access_status().get(key) is not True:  # запрос не показался или был отклонён: включать вручную
+            pane = next(row[1] for row in permissions.ACCESS_ROWS if row[0] == key)
+            QDesktopServices.openUrl(QUrl(permissions.privacy_link(pane)))
 
     @Slot(str)
     @safe_slot

@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 import ctypes
-import ctypes.util
 import logging
 import sys
+
+from govorilka import objc_bridge
 
 log = logging.getLogger(__name__)
 
@@ -30,27 +31,15 @@ BEHAVIOR = CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILI
 LEVEL_POP_UP_MENU = 101  # NSPopUpMenuWindowLevel: над полноэкранным окном
 
 
-def _runtime():  # noqa: ANN202
-    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
-    objc.sel_registerName.restype = ctypes.c_void_p
-    objc.sel_registerName.argtypes = [ctypes.c_char_p]
-    return objc
-
-
-def _send(objc, receiver: int, selector: str, restype=ctypes.c_void_p, argtypes=(), args=()):  # noqa: ANN001, ANN202
-    function = ctypes.CFUNCTYPE(restype, ctypes.c_void_p, ctypes.c_void_p, *argtypes)(("objc_msgSend", objc))
-    return function(receiver, objc.sel_registerName(selector.encode()), *args)
-
-
 def apply(view_id: int, send=None) -> bool:  # noqa: ANN001
     """Настраивает окно по его winId() (на Mac это NSView). True — настройки применены. send подменяют в тестах."""
     if send is None:
         if sys.platform != "darwin":
             return False
-        objc = _runtime()
+        objc = objc_bridge.runtime()
 
         def send(receiver, selector, restype=ctypes.c_void_p, argtypes=(), args=()):  # noqa: ANN001, ANN202
-            return _send(objc, receiver, selector, restype, argtypes, args)
+            return objc_bridge.send(objc, receiver, selector, restype, argtypes, args)
 
     try:
         window = send(view_id, "window")

@@ -43,9 +43,11 @@ ColumnLayout {
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 implicitHeight: 32
                 text: row.modelData.granted === true ? "Открыть" : "Разрешить"
-                tip: "Открыть «Системные настройки» прямо на разделе «" + row.modelData.label + "» и включить Говорилку"
+                tip: row.modelData.granted === true
+                     ? "Открыть «Системные настройки» на разделе «" + row.modelData.label + "»"
+                     : "Показать запрос macOS или, если он уже был, открыть раздел «" + row.modelData.label + "»: останется включить Говорилку"
                 variant: row.modelData.granted === false ? "primary" : "ghost"
-                onClicked: backend.openPrivacy(row.modelData.pane)
+                onClicked: row.modelData.granted === true ? backend.openPrivacy(row.modelData.pane) : backend.requestAccess(row.modelData.id)
             }
         }
     }
@@ -55,7 +57,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.topMargin: 4
         wrapMode: Text.WordWrap
-        text: "Серый кружок — система спросит сама при первой записи. Переключатель включён, а доступа нет? Так бывает после переустановки."
+        text: "Серый кружок — macOS ещё не спрашивала: нажмите «Разрешить». Переключатель включён, а кружок красный? Так бывает после переустановки: нажмите «Сбросить все разрешения»."
         font.pixelSize: 11
         lineHeight: 1.2
         color: Theme.textTertiary
