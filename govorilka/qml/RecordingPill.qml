@@ -18,6 +18,7 @@ Window {
     y: Screen.virtualY + 22
     title: "Говорилка — запись"
     objectName: "pill"
+    onVisibleChanged: if (visible) backend.prepareOverlay(pill)   // macOS: плашка видна и над полноэкранными окнами
     transientParent: null   // самостоятельное окно: иначе оно скрыто, пока скрыто главное
 
     Rectangle {

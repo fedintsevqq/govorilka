@@ -577,3 +577,29 @@ def test_window_action_brings_back_a_minimized_window(qapp, tmp_path):
     assert pump(qapp, window.isVisible)
     window.hide()
     engine.deleteLater()
+
+
+def test_mac_overlay_sets_the_three_window_properties_in_order():
+    from govorilka.qt import mac_overlay
+
+    calls = []
+
+    def send(receiver, selector, restype=None, argtypes=(), args=()):
+        calls.append((selector, args))
+        return 1234 if selector == "window" else None
+
+    assert mac_overlay.apply(77, send=send)
+    assert [c[0] for c in calls] == ["window", "setHidesOnDeactivate:", "setCollectionBehavior:", "setLevel:"]
+    assert calls[1][1] == (False,)  # не прятать, когда приложение неактивно
+    behavior = calls[2][1][0]
+    assert behavior & mac_overlay.CAN_JOIN_ALL_SPACES and behavior & mac_overlay.FULL_SCREEN_AUXILIARY
+    assert calls[3][1] == (mac_overlay.LEVEL_POP_UP_MENU,)
+
+
+def test_mac_overlay_never_breaks_the_app():
+    from govorilka.qt import mac_overlay
+
+    assert mac_overlay.apply(77, send=lambda *a, **k: None) is False  # у вида нет окна
+    assert mac_overlay.apply(77, send=lambda *a, **k: (_ for _ in ()).throw(OSError("нет"))) is False
+    if sys.platform != "darwin":
+        assert mac_overlay.apply(77) is False  # вне macOS ничего не делает

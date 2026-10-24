@@ -57,6 +57,7 @@ Window {
         openedAt = Date.now()
         reveal = 0
         show()
+        backend.prepareOverlay(menu)   // macOS: поверх полноэкранных приложений, не прячется при неактивной Говорилке
         raise()
         requestActivate()
         appear.restart()

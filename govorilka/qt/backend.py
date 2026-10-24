@@ -35,7 +35,7 @@ from govorilka.hotkeys import (
 )
 from govorilka.pipeline import TextEvent
 from govorilka import ai
-from govorilka.qt import autopaste
+from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
 from govorilka.transcript import Transcript, format_offset
@@ -479,6 +479,13 @@ class Backend(QObject):
         if not self.controller.settings.tour_done:
             self.controller.update_settings(map_to_settings(self.controller.settings, {"tour_done": True}))
             self.settingsChanged.emit()
+
+    @Slot(QObject)
+    @safe_slot
+    def prepareOverlay(self, window: QObject) -> None:  # noqa: N802
+        """Круговое меню и плашка записи должны появляться над полноэкранными приложениями (macOS)."""
+        if sys.platform == "darwin" and isinstance(window, QWindow):
+            mac_overlay.apply(int(window.winId()))
 
     @Slot(QObject)
     @safe_slot
