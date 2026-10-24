@@ -11,6 +11,8 @@ import Foundation
 import ScreenCaptureKit
 
 let sampleRate = 48_000
+let reconnectAttempts = 10  // ~5 секунд на переключение AirPods между режимами
+let reconnectDelayNs: UInt64 = 500_000_000
 
 func report(_ line: String) {
     FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
@@ -64,9 +66,29 @@ final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
         output.write(Data(bytes: data, count: Int(bufferList.mBuffers.mDataByteSize)))
     }
 
+    // Подключили или сменили наушники — macOS может остановить поток системного звука. Вместо выхода
+    // переподключаемся сами: иначе Говорилка молча теряет звук собеседников до следующего ручного переподключения.
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        report("error: поток остановлен: \(error.localizedDescription)")
-        exit(2)
+        report("system audio stream stopped, reconnecting: \(error.localizedDescription)")
+        self.stream = nil
+        reconnect(attempt: 1)
+    }
+
+    private func reconnect(attempt: Int) {
+        Task {
+            do {
+                try await self.start()
+                report("device changed")
+            } catch {
+                if attempt < reconnectAttempts {
+                    try? await Task.sleep(nanoseconds: reconnectDelayNs)
+                    reconnect(attempt: attempt + 1)
+                } else {
+                    report("error: поток остановлен: \(error.localizedDescription)")
+                    exit(2)
+                }
+            }
+        }
     }
 }
 
@@ -104,15 +126,21 @@ final class MicTap {
         }
     }
 
-    private func restart() {
+    /// Пока AirPods переключаются между режимами (наушники и микрофон), вход на короткое время без формата.
+    /// Тогда пробуем снова через полсекунды, а не выходим: выход оставил бы Говорилку без микрофона.
+    private func restart(attempt: Int = 1) {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         do {
             try start()
             report("device changed")
         } catch {
-            report("error: не переподключился к микрофону: \(error.localizedDescription)")
-            exit(3)
+            if attempt < reconnectAttempts {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.restart(attempt: attempt + 1) }
+            } else {
+                report("error: не переподключился к микрофону: \(error.localizedDescription)")
+                exit(3)
+            }
         }
     }
 
