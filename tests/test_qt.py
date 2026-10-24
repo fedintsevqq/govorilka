@@ -608,7 +608,7 @@ def test_mac_overlay_never_breaks_the_app():
 def test_access_rows_are_empty_outside_macos_and_know_all_four_permissions(backend, qapp):
     from govorilka import permissions
 
-    assert [row[0] for row in permissions.ACCESS_ROWS] == ["microphone", "screen", "input", "accessibility"]
+    assert [row[0] for row in permissions.ACCESS_ROWS] == ["microphone", "screen", "input", "accessibility", "automation"]
     if sys.platform != "darwin":
         assert backend.access == [] and backend.accessAvailable is False
         assert set(permissions.access_status().values()) == {None}

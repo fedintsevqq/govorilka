@@ -154,8 +154,9 @@ _MAC_PASTE = 'tell application "System Events" to keystroke "v" using command do
 def _osascript(script: str) -> str:
     result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=5)
     if result.returncode != 0:
-        # -1719 / -25211 / «not allowed assistive access»: нет «Универсального доступа»
-        if "assistive" in result.stderr or "-1719" in result.stderr or "-25211" in result.stderr:
+        # -1719 / -25211 / «not allowed assistive access»: нет «Универсального доступа»;
+        # -1743 «Not authorized to send Apple events»: нет «Автоматизации» (управление System Events)
+        if any(mark in result.stderr for mark in ("assistive", "-1719", "-25211", "-1743", "not authorized", "Not authorized")):
             raise NoPermissionError(result.stderr.strip())
         raise OSError(result.stderr.strip())
     return result.stdout.strip()

@@ -14,6 +14,7 @@ Claude Code сам читает файл транскрипта. Веб-чата
 from __future__ import annotations
 
 import logging
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -66,12 +67,30 @@ BLOCKED_REGIONS = {"RU", "BY", "IR", "KP", "CU", "SY", "CN", "HK", "MO"}
 PROBE_TIMEOUT_S = 4.0
 
 
+def _ssl_context() -> ssl.SSLContext | None:
+    """Сертификаты берём у самой системы через truststore (он уже в сборке: так качаются модели). У собранного
+    приложения на Mac у Python нет своего набора корневых сертификатов: без этого каждая проверка падала с
+    CERTIFICATE_VERIFY_FAILED, и ChatGPT, Claude и Claude Code выглядели «недоступными». Запасной путь — certifi."""
+    try:
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001 — нечем: пробуем настройки Python по умолчанию, как раньше
+        return None
+
+
 def probe_country(url: str, timeout: float = PROBE_TIMEOUT_S) -> str | None:
     """Код страны, как её видит сервис (например, «SE»). None — сервис не ответил (заблокирован или нет сети).
     Запрос анонимный: без cookies, аккаунта и текста разговора."""
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "Govorilka"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 — адрес из списка выше
+        with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:  # noqa: S310
             body = response.read(4096).decode("ascii", "replace")
     except OSError as exc:
         log.info("Не достучался до %s: %s", url, exc)
@@ -86,7 +105,7 @@ def reachable(url: str, timeout: float = PROBE_TIMEOUT_S) -> bool:
     """Отвечает ли сайт вообще (любым кодом). Нет — значит, его режет сеть: открывать бесполезно."""
     try:
         request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Govorilka"})
-        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 — адрес из списка выше
+        with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()):  # noqa: S310
             return True
     except urllib.error.HTTPError:
         return True  # 403, 405 и прочие ответы — сайт жив

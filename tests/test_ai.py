@@ -340,3 +340,35 @@ def test_missing_app_is_rechecked_after_a_few_minutes_found_one_is_remembered(mo
     assert d.find("claude") == "/Applications/Claude.app" and len(calls) == 2
     assert d.find("claude") == "/Applications/Claude.app" and len(calls) == 2
     d.forget()
+
+
+def test_region_check_uses_the_system_certificates(monkeypatch):
+    """В собранном приложении на Mac у Python нет системных сертификатов: без certifi проверка всегда «не достучалась»."""
+    seen = {}
+
+    class Answer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n):
+            return b"loc=DE\n"
+
+    monkeypatch.setattr(ai.urllib.request, "urlopen", lambda *a, **k: seen.update(k) or Answer())
+    assert ai.probe_country("https://chatgpt.com/cdn-cgi/trace") == "DE"
+    assert seen["context"] is not None  # передан набор системных сертификатов (truststore)
+    seen.clear()
+    assert ai.reachable("https://gemini.google.com/") is True and seen["context"] is not None
+
+
+def test_mac_apple_events_denial_is_reported_as_missing_permission(monkeypatch):
+    from types import SimpleNamespace
+
+    from govorilka.qt import autopaste
+
+    stderr = "execution error: Not authorized to send Apple events to System Events. (-1743)"
+    monkeypatch.setattr(autopaste.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr=stderr))
+    with pytest.raises(autopaste.NoPermissionError):
+        autopaste._osascript("tell application \"System Events\" to get name")

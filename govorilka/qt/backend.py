@@ -384,7 +384,7 @@ class Backend(QObject):
         if result.target:
             autopaste.start(result.target, on_no_permission=lambda: self.toast.emit(
                 "macOS не дал вставить текст: включите Говорилку в Настройки → Конфиденциальность и безопасность → "
-                "Универсальный доступ. Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
+                "Универсальный доступ и Автоматизация (System Events). Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
         self.toast.emit(result.message, "success" if result.ok else "error")
 
     @Slot()

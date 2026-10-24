@@ -44,6 +44,7 @@ ACCESS_ROWS = (
     ("screen", "ScreenCapture", "Запись экрана и системного звука", "голоса собеседников из Zoom, Teams, браузера"),
     ("input", "ListenEvent", "Мониторинг ввода", "горячая клавиша из любой программы"),
     ("accessibility", "Accessibility", "Универсальный доступ", "вставка разговора в чат нейросети"),
+    ("automation", "Automation", "Автоматизация", "узнать, какой чат открыт, и вставить в него разговор"),
 )
 
 
@@ -72,6 +73,7 @@ def access_status() -> dict[str, bool | None]:
         "screen": _call_bool(core, "CGPreflightScreenCaptureAccess"),
         "input": input_monitoring_status(),
         "accessibility": _call_bool(ax, "AXIsProcessTrusted"),
+        "automation": None,  # узнать без запроса нельзя: macOS спросит при первой вставке
     }
 
 

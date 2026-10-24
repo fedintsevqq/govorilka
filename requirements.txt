@@ -10,3 +10,4 @@ PySide6-Essentials==6.11.2  # интерфейс: Qt Quick (QML), трей. 6.12
 livekit==1.1.21  # модуль WebRTC: эхоподавление микрофона по звуку колонок
 PyAudioWPatch==0.2.12.9; sys_platform == "win32"
 comtypes==1.4.17; sys_platform == "win32"  # узнаём о смене наушников через Windows Core Audio
+truststore==0.10.5  # системные сертификаты: проверка доступности нейросетей на Mac

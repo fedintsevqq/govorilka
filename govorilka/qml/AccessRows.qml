@@ -22,7 +22,7 @@ ColumnLayout {
             id: row
             required property var modelData
             Layout.fillWidth: true
-            implicitHeight: rows.compact ? 40 : 54
+            implicitHeight: rows.compact ? 36 : 54
             radius: 14
             color: Theme.coreRaised
             border.color: Theme.shellLine
