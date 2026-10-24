@@ -34,7 +34,7 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai
+from govorilka import ai, permissions
 from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
@@ -480,11 +480,52 @@ class Backend(QObject):
             self.controller.update_settings(map_to_settings(self.controller.settings, {"tour_done": True}))
             self.settingsChanged.emit()
 
+    accessChanged = Signal()  # noqa: N815
+
+    def _get_access(self) -> list[dict[str, object]]:
+        if sys.platform != "darwin":
+            return []
+        status = permissions.access_status()
+        return [
+            {"id": key, "pane": pane, "label": label, "hint": hint, "granted": status.get(key)}
+            for key, pane, label, hint in permissions.ACCESS_ROWS
+        ]
+
+    access = Property("QVariantList", _get_access, notify=accessChanged)
+    accessAvailable = Property(bool, lambda self: sys.platform == "darwin", constant=True)  # noqa: N815
+
+    @Slot()
+    @safe_slot
+    def refreshAccess(self) -> None:  # noqa: N802
+        self.accessChanged.emit()
+
+    @Slot(str)
+    @safe_slot
+    def openPrivacy(self, pane: str) -> None:  # noqa: N802
+        """Открывает нужный раздел «Конфиденциальность и безопасность»: человеку не надо искать его самому."""
+        if pane in {p for _k, p, *_ in permissions.ACCESS_ROWS}:
+            QDesktopServices.openUrl(QUrl(permissions.privacy_link(pane)))
+
+    @Slot()
+    @safe_slot
+    def resetAllPermissions(self) -> None:  # noqa: N802
+        """Для переустановки: macOS помнит прежнюю копию. Сбрасываем всё, закрываемся, при новом запуске система спросит заново."""
+        if not permissions.can_reset():
+            self.toast.emit("Сброс разрешений работает только в установленном приложении на Mac", "info")
+            return
+        problems = permissions.reset_all()
+        if problems:
+            self.toast.emit("Не всё получилось сбросить: " + "; ".join(problems), "error")
+            return
+        self.toast.emit("Разрешения сброшены, Говорилка закроется. Откройте её снова: система спросит о каждом доступе", "success")
+        QTimer.singleShot(1800, self.quit)
+
     @Slot(QObject)
     @safe_slot
     def prepareOverlay(self, window: QObject) -> None:  # noqa: N802
         """Круговое меню и плашка записи должны появляться над полноэкранными приложениями (macOS)."""
-        if sys.platform == "darwin" and isinstance(window, QWindow):
+        # только на настоящей платформе macOS: в тестах (offscreen) winId() — не вид NSView, и обращение к нему упадёт
+        if sys.platform == "darwin" and QGuiApplication.platformName() == "cocoa" and isinstance(window, QWindow):
             mac_overlay.apply(int(window.winId()))
 
     @Slot(QObject)

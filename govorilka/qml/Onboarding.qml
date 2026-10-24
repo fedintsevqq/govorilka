@@ -9,12 +9,15 @@ Popup {
     id: tour
     objectName: "tour"
     property int step: 0
-    readonly property int steps: 4
+    // на Mac перед клавишей отдельный шаг про разрешения: без них горячая клавиша и запись звука не заработают
+    readonly property var keys: backend.accessAvailable ? ["intro", "access", "hotkey", "tray", "after"] : ["intro", "hotkey", "tray", "after"]
+    readonly property int steps: keys.length
+    readonly property string key: keys[step] || ""
     readonly property var opts: backend.settings
     readonly property var chordKeys: String(opts.hotkeyLabel).split(" + ")
     readonly property var heldKeys: backend.liveKeys && backend.liveKeys !== "ничего" ? backend.liveKeys.split(" + ") : []
     readonly property bool chordHeld: chordKeys.length > 0 && chordKeys.every(k => heldKeys.indexOf(k) >= 0)
-    readonly property bool practiceStep: step === 1 && opened
+    readonly property bool practiceStep: key === "hotkey" && opened
     property bool menuSeen: false
     property string chosen: ""
 
@@ -113,10 +116,11 @@ Popup {
             id: pages
             anchors { left: parent.left; right: parent.right; top: head.bottom; bottom: foot.top; leftMargin: 30; rightMargin: 30; topMargin: 8 }
 
-            Page0 { visible: tour.step === 0 }
-            Page1 { visible: tour.step === 1 }
-            Page2 { visible: tour.step === 2 }
-            Page3 { visible: tour.step === 3 }
+            Page0 { visible: tour.key === "intro" }
+            PageAccess { visible: tour.key === "access" }
+            Page1 { visible: tour.key === "hotkey" }
+            Page2 { visible: tour.key === "tray" }
+            Page3 { visible: tour.key === "after" }
         }
 
         // ---------- низ: назад / дальше ----------
@@ -152,12 +156,13 @@ Popup {
         default property alias art: artBox.data
         property string title: ""
         property string body: ""
+        property int artMax: 210
         anchors.fill: parent
         spacing: 0
         opacity: visible ? 1 : 0
         transform: Translate { y: page.visible || Theme.reduceMotion ? 0 : 8; Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } } }
         Behavior on opacity { NumberAnimation { duration: Theme.slow; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
-        Item { id: artBox; Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 120; Layout.maximumHeight: 210 }
+        Item { id: artBox; Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 120; Layout.maximumHeight: page.artMax }
         Text {
             Layout.fillWidth: true
             Layout.topMargin: 14
@@ -209,6 +214,17 @@ Popup {
             font.pixelSize: 17
             font.weight: Font.DemiBold
             color: key.held ? Theme.text : Theme.textSecondary
+        }
+    }
+
+    // Разрешения macOS (только на Mac)
+    component PageAccess: Page {
+        artMax: 250
+        title: "Сначала разрешите доступ"
+        body: "macOS просит подтвердить каждый доступ один раз. Нажмите «Разрешить» у красных строк: откроется нужный раздел настроек, останется включить переключатель."
+        AccessRows {
+            anchors.fill: parent
+            compact: true
         }
     }
 
@@ -363,7 +379,7 @@ Popup {
                                 border.color: Theme.accent
                                 border.width: 2
                                 SequentialAnimation on opacity {
-                                    running: !Theme.reduceMotion && tour.step === 2
+                                    running: !Theme.reduceMotion && tour.key === "tray"
                                     loops: Animation.Infinite
                                     NumberAnimation { from: 0.9; to: 0.15; duration: 900; easing.type: Easing.InOutSine }
                                     NumberAnimation { from: 0.15; to: 0.9; duration: 900; easing.type: Easing.InOutSine }

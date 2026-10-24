@@ -471,8 +471,15 @@ ApplicationWindow {
     RenameSheet { id: renameSheet }
 
     Onboarding { id: tour }
-    // знакомство — при первом запуске, когда окно уже нарисовалось
-    Timer { interval: 600; running: !window.opts.tour_done; onTriggered: if (!window.opts.tour_done && window.visible) tour.begin() }
+    // знакомство — при первом запуске, как только окно действительно на экране. Раз в полсекунды проверяем, пока не
+    // покажем: на Mac окно появляется позже, чем сработал бы разовый таймер, и знакомство терялось
+    property bool tourShown: false
+    Timer {
+        interval: 500
+        repeat: true
+        running: !window.opts.tour_done && !window.tourShown
+        onTriggered: if (window.visible && window.visibility !== Window.Minimized && !tour.opened) { window.tourShown = true; tour.begin() }
+    }
 
     SettingsWindow { id: settingsWindow; onTourRequested: { window.showWindow(); tour.begin() } }
     RadialMenu { id: radial; practice: tour.opened }

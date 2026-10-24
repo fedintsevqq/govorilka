@@ -603,3 +603,39 @@ def test_mac_overlay_never_breaks_the_app():
     assert mac_overlay.apply(77, send=lambda *a, **k: (_ for _ in ()).throw(OSError("нет"))) is False
     if sys.platform != "darwin":
         assert mac_overlay.apply(77) is False  # вне macOS ничего не делает
+
+
+def test_access_rows_are_empty_outside_macos_and_know_all_four_permissions(backend, qapp):
+    from govorilka import permissions
+
+    assert [row[0] for row in permissions.ACCESS_ROWS] == ["microphone", "screen", "input", "accessibility"]
+    if sys.platform != "darwin":
+        assert backend.access == [] and backend.accessAvailable is False
+        assert set(permissions.access_status().values()) == {None}
+
+
+def test_privacy_links_point_to_the_right_system_settings_pane():
+    from govorilka import permissions
+
+    assert permissions.privacy_link("Microphone") == "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+    assert permissions.privacy_link("ListenEvent").endswith("Privacy_ListenEvent")
+
+
+def test_reset_all_resets_every_service_and_reports_failures(monkeypatch):
+    from govorilka import permissions
+
+    seen = []
+    monkeypatch.setattr(permissions, "reset_permission", lambda service, bundle_id=permissions.BUNDLE_ID: seen.append(service) or (None if service != "Accessibility" else "нет прав"))
+    problems = permissions.reset_all()
+    assert seen == list(permissions.ALL_SERVICES) and problems == ["Accessibility: нет прав"]
+
+
+def test_reset_all_from_the_app_quits_only_when_everything_was_reset(backend, qapp, monkeypatch):
+    from govorilka import permissions
+
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append(kind))
+    monkeypatch.setattr(permissions, "can_reset", lambda: True)
+    monkeypatch.setattr(permissions, "reset_all", lambda: ["Microphone: не вышло"])
+    backend.resetAllPermissions()
+    assert toasts == ["error"]  # не вышло — не закрываем приложение, человек видит причину

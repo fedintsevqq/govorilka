@@ -268,6 +268,12 @@ Window {
             }
 
             Section {
+                visible: backend.accessAvailable
+                heading: "Разрешения macOS"
+                AccessRows { Layout.fillWidth: true }
+            }
+
+            Section {
                 heading: "Нейросеть"
                 Label { text: "Куда отправлять разговор" }
                 ComboField {
