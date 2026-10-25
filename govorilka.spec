@@ -11,6 +11,10 @@ VERSION = os.environ.get("GOVORILKA_VERSION", "0.0.0")
 MAC_ARCH = os.environ.get("GOVORILKA_ARCH", "arm64")  # arm64 — Apple Silicon, x86_64 — Intel
 MAC_MIN_OS = "13.0" if MAC_ARCH == "x86_64" else "14.0"  # под onnxruntime для своей архитектуры
 
+# номер версии из тега релиза: приложение узнаёт по нему, не вышла ли новая (govorilka/version.py)
+with open("govorilka/_build_version.py", "w", encoding="utf-8") as _version_file:
+    _version_file.write(f'VERSION = "{VERSION}"\n')
+
 datas = collect_data_files("onnx_asr")  # предобработчики звука в .onnx лежат внутри пакета
 # livekit грузит нативную библиотеку WebRTC (эхоподавление) из своего пакета через importlib.resources
 datas += collect_data_files("livekit", includes=["rtc/resources/*"])

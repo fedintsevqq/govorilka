@@ -413,6 +413,53 @@ Window {
             }
 
             Section {
+                heading: "Обновления"
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Говорилка " + (backend.appVersion === "dev" ? "(запуск из исходников)" : backend.appVersion)
+                            font.pixelSize: Theme.fontBody
+                            font.weight: Font.DemiBold
+                            color: Theme.text
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            visible: text !== ""
+                            text: backend.updateStatus === "available" ? "Доступна версия " + backend.updateInfo.version + ". Скачайте файл, закройте Говорилку и запустите его."
+                                  : backend.updateMessage
+                            font.pixelSize: 12
+                            color: backend.updateStatus === "error" ? Theme.danger : backend.updateStatus === "latest" ? Theme.success : Theme.textSecondary
+                        }
+                    }
+                    PillButton {
+                        text: backend.updateStatus === "checking" ? "Проверяю…" : "Проверить обновление"
+                        iconName: "bolt"
+                        enabled: backend.updateStatus !== "checking"
+                        tip: "Спросить у GitHub, вышла ли новая версия"
+                        onClicked: backend.checkForUpdates()
+                    }
+                }
+                RowLayout {
+                    visible: backend.updateStatus === "available"
+                    spacing: 8
+                    PillButton { text: "Скачать"; variant: "primary"; iconName: "open"; tip: "Скачать новую версию"; onClicked: backend.downloadUpdate() }
+                    PillButton { text: "Что нового"; tip: "Страница релиза на GitHub"; onClicked: backend.openReleasePage() }
+                    PillButton { text: "Пропустить эту версию"; tip: "Больше не напоминать об этой версии"; onClicked: backend.skipUpdate() }
+                }
+                ToggleRow {
+                    title: "Проверять обновления сами"
+                    hint: "Раз в сутки Говорилка анонимно спрашивает у github.com, не вышла ли новая версия. Ничего о вас не отправляется, кроме обычного адреса компьютера"
+                    checked: win.draft.check_updates === true
+                    onToggled: (v) => win.setValue("check_updates", v)
+                }
+            }
+
+            Section {
                 heading: "Нейросеть"
                 Label { text: "Куда отправлять разговор" }
                 ComboField {

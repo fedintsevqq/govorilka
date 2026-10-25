@@ -165,9 +165,39 @@ ApplicationWindow {
         }
     }
 
+    // ---------- плашка обновления ----------
+    Rectangle {
+        id: updateBar
+        readonly property bool shown: backend.updateInfo.available === true
+        visible: shown
+        anchors { top: topBar.bottom; left: parent.left; right: parent.right; leftMargin: 16; rightMargin: 16; topMargin: 10 }
+        height: shown ? 46 : 0
+        radius: 16
+        color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.14 : 0.10)
+        border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.4)
+        Accessible.role: Accessible.AlertMessage
+        Accessible.name: "Доступна версия " + backend.updateInfo.version
+        RowLayout {
+            anchors { fill: parent; leftMargin: 16; rightMargin: 8 }
+            spacing: 8
+            Icon { name: "bolt"; size: 17; color: Theme.accent; Layout.alignment: Qt.AlignVCenter }
+            Text {
+                Layout.fillWidth: true
+                text: "Вышла версия " + backend.updateInfo.version + (backend.updateInfo.sizeMb ? " (" + backend.updateInfo.sizeMb + " МБ)" : "")
+                elide: Text.ElideRight
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                color: Theme.text
+            }
+            PillButton { text: "Что нового"; implicitHeight: 32; tip: "Открыть страницу релиза на GitHub"; onClicked: backend.openReleasePage() }
+            PillButton { text: "Скачать"; implicitHeight: 32; variant: "primary"; tip: "Скачать новую версию: закройте Говорилку и запустите скачанный файл"; onClicked: backend.downloadUpdate() }
+            IconButton { iconName: "close"; size: 30; tip: "Напомнить позже: плашка скроется до следующего запуска"; onClicked: backend.dismissUpdate() }
+        }
+    }
+
     // ---------- тело ----------
     RowLayout {
-        anchors { top: topBar.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 16; topMargin: 14 }
+        anchors { top: updateBar.shown ? updateBar.bottom : topBar.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 16; topMargin: 14 }
         spacing: Theme.gap
 
         // ===== пульт записи =====

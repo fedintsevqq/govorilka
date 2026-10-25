@@ -39,7 +39,7 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai, asr_models, permissions
+from govorilka import ai, asr_models, permissions, updates, version
 from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
@@ -174,6 +174,9 @@ class Backend(QObject):
         self._capturing = False
         self._tour_active = False
         self._ai_busy = False
+        self._update: updates.UpdateInfo | None = None
+        self._update_status = ""
+        self._update_message = ""
         self._checking_model = False
         self._access_busy: set[str] = set()
         self._access_asked: set[str] = set()
@@ -202,7 +205,7 @@ class Backend(QObject):
             (self._ai_in, self._on_ai_result),
             (self._access_done, self._on_access_done),
             (self._custom_in, self._on_custom_checked),
-            (self._collect_in, self._collect_garbage),
+            (self._update_in, self._on_update),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -310,7 +313,7 @@ class Backend(QObject):
 
     customModelChecked = Signal(bool, str, str)  # noqa: N815 — удалось, сообщение, ключ модели
     _custom_in = Signal(bool, str, str)
-    _collect_in = Signal()  # сборка мусора после выгрузки моделей: только в главном потоке
+    _update_in = Signal(object, str, bool)
 
     @Slot(str, str, str, bool)
     @safe_slot
@@ -345,13 +348,90 @@ class Backend(QObject):
 
         threading.Thread(target=work, name="check-custom-model", daemon=True).start()
 
+    # ---------- обновления ----------
+
+    updateChanged = Signal()  # noqa: N815
+    appVersion = Property(str, lambda self: version.VERSION, constant=True)  # noqa: N815
+    updateInfo = Property("QVariantMap", lambda self: self._update_map(), notify=updateChanged)  # noqa: N815
+    updateStatus = Property(str, lambda self: self._update_status, notify=updateChanged)  # noqa: N815 — "", checking, latest, error, available
+    updateMessage = Property(str, lambda self: self._update_message, notify=updateChanged)  # noqa: N815
+
+    def _update_map(self) -> dict[str, object]:
+        info = self._update
+        if info is None:
+            return {"available": False}
+        return {
+            "available": True,
+            "version": info.version,
+            "notes": info.notes,
+            "page": info.page_url,
+            "hasDownload": bool(info.asset_url),
+            "sizeMb": round(info.size / 1_048_576) if info.size else 0,
+        }
+
+    def _set_update_state(self, status: str, message: str = "") -> None:
+        self._update_status, self._update_message = status, message
+        self.updateChanged.emit()
+
     @Slot()
-    def _collect_garbage(self) -> None:
-        gc.collect()  # методом QObject: сигнал придёт в поток самого объекта, то есть в главный
+    @safe_slot
+    def checkForUpdates(self) -> None:  # noqa: N802
+        """Кнопка «Проверить обновление»."""
+        if self._update_status == "checking":
+            return
+        self._set_update_state("checking", "Проверяю…")
+        self.controller.check_for_update(manual=True)
+
+    def _on_update(self, info: object | None, error: str, manual: bool) -> None:
+        self._update = info  # type: ignore[assignment]
+        if info is not None:
+            self._set_update_state("available", f"Доступна версия {info.version}")  # type: ignore[attr-defined]
+        elif error:
+            if manual:
+                self._set_update_state("error", f"Не получилось проверить: {error}. Проверьте интернет и попробуйте ещё раз")
+            else:
+                self._set_update_state("")
+        else:
+            self._set_update_state("latest" if manual else "", f"У вас последняя версия: {version.VERSION}" if manual else "")
+        if manual and not error and info is None:
+            self.toast.emit(f"У вас последняя версия: {version.VERSION}", "success")
+
+    @Slot()
+    @safe_slot
+    def downloadUpdate(self) -> None:  # noqa: N802
+        """Скачивание файла новой версии браузером (в «Загрузки»); ссылка идёт на github.com."""
+        info = self._update
+        if info is None:
+            return
+        QDesktopServices.openUrl(QUrl(info.asset_url or info.page_url))
+        self.toast.emit("Скачиваю новую версию. Закройте Говорилку и запустите скачанный файл", "info")
+
+    @Slot()
+    @safe_slot
+    def openReleasePage(self) -> None:  # noqa: N802
+        if self._update is not None:
+            QDesktopServices.openUrl(QUrl(self._update.page_url))
+
+    @Slot()
+    @safe_slot
+    def skipUpdate(self) -> None:  # noqa: N802
+        """«Пропустить эту версию»: пока не выйдет следующая, не предлагаем."""
+        if self._update is None:
+            return
+        self.controller.update_settings(replace(self.controller.settings, skipped_update=self._update.version))
+        self._update = None
+        self._set_update_state("")
+        self.settingsChanged.emit()
+
+    @Slot()
+    @safe_slot
+    def dismissUpdate(self) -> None:  # noqa: N802
+        """«Позже»: плашка прячется до следующего запуска."""
+        self._update = None
+        self._set_update_state("")
 
     def _on_custom_checked(self, ok: bool, message: str, key: str) -> None:
         self._checking_model = False
-        gc.collect()
         self._status_in.emit("Готово")
         self.customModelChecked.emit(ok, message, key)
 
@@ -912,7 +992,10 @@ class _Relay(Listener):
         self._b._release_in.emit()
 
     def on_models_unloaded(self) -> None:
-        self._b._collect_in.emit()
+        pass  # веса освобождаются сами, как только на них не остаётся ссылок: явная сборка мусора не нужна
+
+    def on_update(self, info: object | None, error: str | None, manual: bool) -> None:
+        self._b._update_in.emit(info, error or "", manual)
 
     def on_finished(self, path: Path | None, message: str) -> None:
         self._b._finished_in.emit(path, message)

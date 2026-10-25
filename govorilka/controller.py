@@ -22,7 +22,7 @@ from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
 from urllib.parse import quote
 
-from govorilka import ai, desktop_apps, models
+from govorilka import ai, desktop_apps, models, updates, version
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
@@ -44,6 +44,9 @@ from govorilka.transcript import Transcript, write_atomic
 from govorilka.voices import VoiceBook
 
 log = logging.getLogger(__name__)
+
+AUTO_CHECK_DELAY_S = 8.0  # даём окну и моделям спокойно запуститься
+AUTO_CHECK_EVERY_S = 24 * 3600
 
 
 class AppState(str, Enum):
@@ -69,6 +72,7 @@ class Listener:
     def on_hotkey(self) -> None: ...
     def on_hotkey_release(self) -> None: ...
     def on_finished(self, path: Path | None, message: str) -> None: ...
+    def on_update(self, info: object | None, error: str | None, manual: bool) -> None: ...  # UpdateInfo, текст ошибки
     def on_models_unloaded(self) -> None: ...  # сборку мусора надо делать в главном потоке: из фонового она трогает объекты Qt
 
 
@@ -98,6 +102,8 @@ class Controller:
         self.last_file: Path | None = None
         self._stopping: threading.Thread | None = None
         self._unload_timer: threading.Timer | None = None
+        self._update_timer: threading.Timer | None = None
+        self.update_info: updates.UpdateInfo | None = None
         self._voice_book: VoiceBook | None = None
         self._closing = False  # идёт выход: новые записи не начинаем
         self._probe_country = ai.probe_country  # подменяются в тестах: настоящие проверки ходят в сеть
@@ -113,6 +119,47 @@ class Controller:
 
     def start(self) -> None:
         self.hotkeys.start()
+        self._schedule_update_check(AUTO_CHECK_DELAY_S)
+
+    # ---------- обновления ----------
+
+    def _schedule_update_check(self, delay_s: float) -> None:
+        """Автопроверка: через несколько секунд после запуска и дальше раз в сутки. Из исходников не проверяем."""
+        if self._closing or not self.settings.check_updates or not version.is_release():
+            return
+        timer = threading.Timer(delay_s, self._auto_check)
+        timer.daemon = True
+        self._update_timer = timer
+        timer.start()
+
+    def _auto_check(self) -> None:
+        self.check_for_update(manual=False)
+        self._schedule_update_check(AUTO_CHECK_EVERY_S)
+
+    def check_for_update(self, manual: bool = True) -> None:
+        """Спрашивает у GitHub про новую версию в фоне. Результат приходит в listener.on_update. Автопроверка молчит о
+        сбоях и о версиях, от которых человек отказался; ручная отвечает всегда."""
+
+        def work() -> None:
+            info, error = None, None
+            try:
+                info = updates.check()
+            except updates.UpdateError as exc:
+                error = str(exc)
+                log.info("Проверка обновлений не удалась: %s", exc)
+            except Exception as exc:  # noqa: BLE001 — проверка обновлений не должна ничего ронять
+                log.exception("Сбой проверки обновлений")
+                error = str(exc)
+            log.info("Проверка обновлений (%s): у вас %s, новее: %s", "вручную" if manual else "сама", version.VERSION,
+                     info.version if info else error or "нет")
+            if info is not None and not manual and info.version == self.settings.skipped_update:
+                info = None
+            if self._closing:
+                return
+            self.update_info = info
+            self.listener.on_update(info, error, manual)
+
+        threading.Thread(target=work, name="check-update", daemon=True).start()
 
     def prefetch_models(self) -> None:
         """Первый запуск: модели (около 880 МБ) качаются сразу в фоне, а не при первом нажатии записи."""
@@ -158,6 +205,8 @@ class Controller:
     def shutdown(self) -> None:
         """Выход: дописать запись и расшифровку, остановить опрос клавиш."""
         self._closing = True
+        if self._update_timer is not None:
+            self._update_timer.cancel()
         self.hotkeys.stop()
         if self.state == AppState.RECORDING or self.state == AppState.PAUSED:
             log.info("Выход во время записи: голоса не уточняются, в файле подписи как были по ходу записи")
@@ -209,7 +258,7 @@ class Controller:
             return False
         self.engines = None
         self._unload_timer = None
-        self.listener.on_models_unloaded()  # веса освобождаются после сборки мусора; её делает интерфейс в главном потоке
+        self.listener.on_models_unloaded()  # веса освобождаются сами, когда на них не остаётся ссылок (проверено замером)
         log.info("Модели выгружены из памяти: запись не идёт")
         return True
 

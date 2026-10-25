@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 
 # сборка
+govorilka/_build_version.py
 build/
 dist/
 bin/

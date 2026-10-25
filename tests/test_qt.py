@@ -36,7 +36,16 @@ class NoHotkeys:
 @pytest.fixture
 def backend(qapp, tmp_path):
     settings = Settings(transcripts_dir=str(tmp_path))
-    return Backend(lambda listener: Controller(listener, settings, hotkeys=NoHotkeys()))
+    created = Backend(lambda listener: Controller(listener, settings, hotkeys=NoHotkeys()))
+    yield created
+    # Объект, который тест бросил, живёт в цикле событий Qt и получает таймеры уже после конца теста: в долгом
+    # ожидании другого теста это давало случайное падение. Убираем его явно.
+    from PySide6.QtCore import QEvent
+
+    created.shutdown()
+    created.setParent(None)
+    created.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def speech(who, start, text, source="system"):
@@ -759,3 +768,76 @@ def test_model_list_ends_with_the_custom_item_and_labels_custom_keys(backend):
     assert {entry["id"] for entry in backend.models[:-1]} >= {"gigaam-v3-e2e-rnnt", "gigaam-v3-e2e-rnnt@int8"}
     assert backend.isCustomModel(asr_models.hf_key("a/b")) and not backend.isCustomModel("gigaam-v3-e2e-ctc")
     assert backend.modelLabel(asr_models.hf_key("a/b")) == "Своя модель: a/b"
+
+
+def test_manual_update_check_shows_the_new_version_or_says_you_are_up_to_date(backend, qapp, monkeypatch):
+    from conftest import pump
+
+    from govorilka import updates, version
+
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append((kind, text)))
+    newer = updates.UpdateInfo("9.9.9", "https://github.com/x/releases/9.9.9", "Что нового", "f.exe", "https://example/f.exe", 150_000_000, "ab")
+    monkeypatch.setattr(updates, "check", lambda: newer)
+    backend.checkForUpdates()
+    assert backend.updateStatus == "checking"
+    assert pump(qapp, lambda: backend.updateInfo.get("available") is True)
+    assert backend.updateInfo["version"] == "9.9.9" and backend.updateStatus == "available" and backend.updateInfo["sizeMb"] == 143
+    backend.dismissUpdate()  # «Позже»: плашка скрыта
+    assert backend.updateInfo == {"available": False}
+    monkeypatch.setattr(updates, "check", lambda: None)
+    backend.checkForUpdates()
+    assert pump(qapp, lambda: backend.updateStatus == "latest")
+    assert ("success", f"У вас последняя версия: {version.VERSION}") in toasts
+
+
+def test_update_check_failure_is_loud_only_when_you_asked(backend, qapp, monkeypatch):
+    from conftest import pump
+
+    from govorilka import updates
+
+    def fail():
+        raise updates.UpdateError("нет связи с GitHub (таймаут)")
+
+    monkeypatch.setattr(updates, "check", fail)
+    backend.checkForUpdates()
+    assert pump(qapp, lambda: backend.updateStatus == "error") and "нет связи" in backend.updateMessage
+    backend.controller.check_for_update(manual=False)  # автопроверка: тихо
+    pump(qapp, lambda: False, timeout=0.4)
+    assert backend.updateStatus == "error" or backend.updateStatus == ""  # не показывает людям лишнего
+
+
+def test_skipped_version_is_not_offered_again_by_the_automatic_check(backend, qapp, monkeypatch):
+    from conftest import pump
+
+    from govorilka import controller as controller_module
+    from govorilka import updates
+
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    newer = updates.UpdateInfo("9.9.9", "https://example/p", "", "", "", 0, "")
+    monkeypatch.setattr(updates, "check", lambda: newer)
+    backend.checkForUpdates()
+    assert pump(qapp, lambda: backend.updateStatus == "available")
+    backend.skipUpdate()
+    assert backend.settings["skipped_update"] == "9.9.9" and backend.updateInfo == {"available": False}
+    backend.controller.check_for_update(manual=False)  # автопроверка про пропущенную версию молчит
+    pump(qapp, lambda: False, timeout=0.5)
+    assert backend.updateInfo == {"available": False}
+    backend.checkForUpdates()  # а вручную показываем всё равно
+    assert pump(qapp, lambda: backend.updateStatus == "available")
+
+
+def test_automatic_check_is_off_for_source_runs_and_when_disabled(backend, monkeypatch):
+    from govorilka import version
+
+    c = backend.controller
+    c._schedule_update_check(1)
+    assert c._update_timer is None  # из исходников (dev) автопроверка не запускается
+    monkeypatch.setattr(version, "is_release", lambda: True)
+    c.settings = c.settings.__class__(check_updates=False)
+    c._schedule_update_check(1)
+    assert c._update_timer is None
+    c.settings = c.settings.__class__(check_updates=True)
+    c._schedule_update_check(3600)
+    assert c._update_timer is not None
+    c._update_timer.cancel()

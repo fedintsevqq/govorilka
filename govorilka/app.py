@@ -42,8 +42,10 @@ def main() -> None:
         from govorilka.selftest import run_ui
 
         sys.exit(run_ui())
+    from govorilka import version
     from govorilka.qt.app import run
 
+    logging.getLogger(__name__).info("Говорилка %s, %s", version.VERSION, sys.platform)  # версия нужна в любом отчёте о сбое
     sys.exit(run(background=BACKGROUND_FLAG in sys.argv))
 
 
