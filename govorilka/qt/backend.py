@@ -88,6 +88,14 @@ def settings_to_map(settings: Settings) -> dict[str, object]:
     return data
 
 
+def has_model_files(folder: Path) -> bool:
+    """Модель распознавания лежит в папке: есть хоть один файл .onnx (недокачанные — с другим расширением)."""
+    try:
+        return folder.is_dir() and any(folder.rglob("*.onnx"))
+    except OSError:
+        return False
+
+
 def copy_mime(source: QMimeData | None) -> QMimeData | None:
     """Копия содержимого буфера обмена во всех форматах: после диктовки вернём его на место."""
     if source is None or not source.formats():
@@ -151,7 +159,6 @@ class Backend(QObject):
     _hotkey_in = Signal()
     _release_in = Signal()
     _dictation_in = Signal(str)
-    _catalog_in = Signal(object)
     _summary_status_in = Signal(str)
     _summary_done_in = Signal(str, str)
     _llm_progress_in = Signal(float)
@@ -256,7 +263,6 @@ class Backend(QObject):
             (self._update_in, self._on_update),
             (self._install_in, self._on_install_done),
             (self._dictation_in, self._on_dictation),
-            (self._catalog_in, self._on_catalog),
             (self._summary_status_in, self._on_summary_status),
             (self._summary_done_in, self._on_summary_done),
             (self._llm_progress_in, self._on_llm_progress),
@@ -496,13 +502,9 @@ class Backend(QObject):
     @Slot()
     @safe_slot
     def refreshCatalog(self) -> None:  # noqa: N802
-        """Какие модели уже скачаны: проверяем по папкам, когда открывают настройки."""
-
-        def work() -> None:
-            found = {m.key: model_files.is_downloaded("asr", m.key) for m in asr_models.CATALOG}
-            self._catalog_in.emit(found)
-
-        threading.Thread(target=work, name="catalog-scan", daemon=True).start()
+        """Какие модели уже скачаны: смотрим, есть ли в папке модели файлы ONNX, когда открывают настройки.
+        Быстро и в потоке окна: фоновый поток мог бы прислать ответ уже закрытому окну."""
+        self._on_catalog({m.key: has_model_files(asr_models.parse(m.key).local_dir) for m in asr_models.CATALOG})
 
     def _on_catalog(self, found: dict) -> None:
         self._downloaded = dict(found)

@@ -158,6 +158,35 @@ jobs:
           name: macos-${{ matrix.arch }}
           path: dist/Govorilka-*-macos-*.dmg
 
+  # Установка одной командой (install.ps1 / install.sh) на последнем опубликованном релизе: скачать, сверить SHA-256,
+  # разложить по местам. Своя папка и без запуска, чтобы не трогать систему сборочной машины.
+  installers:
+    if: "!startsWith(github.ref, 'refs/tags/v')"
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, macos-14]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          GOVORILKA_INSTALL_DIR: ${{ runner.temp }}\govorilka-install
+          GOVORILKA_NO_START: "1"
+        run: |
+          Get-Content -Raw -Encoding UTF8 install.ps1 | Invoke-Expression
+          if (-not (Test-Path "$env:GOVORILKA_INSTALL_DIR\Govorilka.exe")) { throw 'Govorilka.exe не появился' }
+      - name: install.sh
+        if: runner.os == 'macOS'
+        env:
+          GOVORILKA_APP: ${{ runner.temp }}/Govorilka.app
+          GOVORILKA_NO_OPEN: "1"
+        run: |
+          bash install.sh
+          test -x "$GOVORILKA_APP/Contents/MacOS/Govorilka"
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, macos]

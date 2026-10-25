@@ -17,7 +17,22 @@
 
 ## Установка
 
-Скачайте файл для своей системы со страницы [Releases](https://github.com/fedintsevqq/govorilka/releases/latest):
+**Проще всего — одной командой.** Так не будет предупреждений «неизвестный издатель» и «не удаётся проверить
+разработчика»: скрипт сам скачивает последний релиз с GitHub и сверяет его контрольную сумму.
+
+Windows (PowerShell, программа ляжет в `%LOCALAPPDATA%\Programs\Govorilka`, ярлык — в «Пуск»):
+
+```powershell
+irm https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.ps1 | iex
+```
+
+Mac (Терминал, программа ляжет в «Программы»):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.sh | bash
+```
+
+**Или вручную.** Скачайте файл для своей системы со страницы [Releases](https://github.com/fedintsevqq/govorilka/releases/latest):
 
 - Windows — `Govorilka-…-windows-x64.exe`, запускается без установки;
 - Mac на Apple Silicon (M1–M4) — `Govorilka-…-macos-apple-silicon.dmg`;
