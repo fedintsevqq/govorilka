@@ -86,6 +86,7 @@ def check_mac(dmg: Path, built_app: Path) -> None:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # консоль Windows CI в cp1252: кириллица иначе роняет вывод
     target = Path(sys.argv[1])
     try:
         if target.suffix == ".dmg":
