@@ -100,3 +100,42 @@ def test_file_with_two_voices_gets_two_speakers(engines, tmp_path):
 
 def test_recognizer_still_works_standalone():
     assert "коллеги" in Recognizer(DEFAULT_MODEL).transcribe(read_wav("speech_ru.wav")).lower()
+
+
+def test_dictation_recognises_real_speech_from_the_microphone(engines):
+    """Диктовка на настоящей модели: речь приходит кусками по 0.1 с, как из микрофона, отпустили — получили текст."""
+    import queue
+    import threading
+    import time
+
+    from govorilka.audio_base import AudioChunk, DeviceInfo
+    from govorilka.dictation import Dictation
+
+    speech = read_wav("speech_ru.wav")
+
+    class Mic:
+        def default_mic(self):
+            return DeviceInfo(0, "mic", 16_000, 1)
+
+        def open_capture(self, device, out: queue.Queue):
+            stopped = threading.Event()
+
+            def play():
+                for i in range(0, len(speech), 1600):
+                    if stopped.is_set():
+                        return
+                    out.put(AudioChunk(speech[i : i + 1600], i / 16_000))
+
+            threading.Thread(target=play, daemon=True).start()
+
+            class Capture:
+                def stop(self):
+                    stopped.set()
+
+            return Capture()
+
+    dictation = Dictation(engines, Mic())
+    dictation.start()
+    time.sleep(1.0)
+    text = dictation.finish()
+    assert "коллеги" in text.lower()

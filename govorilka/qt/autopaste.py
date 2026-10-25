@@ -142,6 +142,24 @@ def _windows_paste() -> None:
     user32.keybd_event(VK_CONTROL, 0, KEYUP, 0)
 
 
+def paste_at_cursor() -> None:
+    """Диктовка: Ctrl+V (⌘V) туда, где сейчас курсор, в любом приложении — браузер, Claude, Discord, Telegram, Word.
+    Mac без «Универсального доступа» — NoPermissionError (текст остаётся в буфере)."""
+    if sys.platform == "darwin":
+        from govorilka import mac_ax
+
+        try:
+            mac_ax.press_paste()
+        except mac_ax.NotTrustedError as exc:
+            raise NoPermissionError(str(exc)) from exc
+        return
+    user32 = ctypes.windll.user32
+    user32.keybd_event(VK_CONTROL, 0, 0, 0)
+    user32.keybd_event(VK_V, 0, 0, 0)
+    user32.keybd_event(VK_V, 0, KEYUP, 0)
+    user32.keybd_event(VK_CONTROL, 0, KEYUP, 0)
+
+
 # ---------- macOS ----------
 
 def _mac_title() -> str:

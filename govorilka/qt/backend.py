@@ -18,7 +18,7 @@ from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Property, QObject, QPoint, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QMimeData, QObject, QPoint, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QWindow
 
 from govorilka.audio_base import PermissionDeniedError
@@ -55,6 +55,8 @@ ELAPSED_TICK_MS = 200
 REFRESH_MS = 50  # реплики, пришедшие почти одновременно, рисуем одним обновлением
 CAPTURE_TICK_MS = 40
 CAPTURE_TIMEOUT_S = 10.0
+PASTE_DELAY_MS = 60  # буфер обмена успевает обновиться до Ctrl+V
+RESTORE_CLIPBOARD_MS = 600  # приложение успевает забрать текст из буфера, потом возвращаем прежний
 
 
 def safe_slot(func):  # noqa: ANN001, ANN201
@@ -75,11 +77,22 @@ def safe_slot(func):  # noqa: ANN001, ANN201
 
 def settings_to_map(settings: Settings) -> dict[str, object]:
     data = asdict(settings)
-    try:
-        data["hotkeyLabel"] = format_chord(parse_chord(settings.hotkey))
-    except ValueError:
-        data["hotkeyLabel"] = settings.hotkey
+    for field_name, label in (("hotkey", "hotkeyLabel"), ("dictation_hotkey", "dictationLabel")):
+        try:
+            data[label] = format_chord(parse_chord(getattr(settings, field_name)))
+        except ValueError:
+            data[label] = getattr(settings, field_name)
     return data
+
+
+def copy_mime(source: QMimeData | None) -> QMimeData | None:
+    """Копия содержимого буфера обмена во всех форматах: после диктовки вернём его на место."""
+    if source is None or not source.formats():
+        return None
+    copy = QMimeData()
+    for name in source.formats():
+        copy.setData(name, source.data(name))
+    return copy
 
 
 CLEARABLE = {"claude_workdir"}  # пустое значение — осмысленное «по умолчанию» (папка транскриптов)
@@ -134,6 +147,11 @@ class Backend(QObject):
     _permission_in = Signal(object)
     _hotkey_in = Signal()
     _release_in = Signal()
+    _dictation_in = Signal(str)
+    _dictation_text_in = Signal(str)
+    dictationChanged = Signal()  # noqa: N815
+    dictationLevelChanged = Signal()  # noqa: N815
+    capturedDictationHotkey = Signal(str, str, str)  # noqa: N815 — строка для настроек, подпись, предупреждение
     _finished_in = Signal(object, str)
     _ai_in = Signal(object)
 
@@ -176,6 +194,10 @@ class Backend(QObject):
         self._ai_busy = False
         self._installing = False
         self._update: updates.UpdateInfo | None = None
+        self._dictation_phase = ""
+        self._dictation_note = ""
+        self._dictation_level = 0.0
+        self._capture_target = "hotkey"
         self._update_status = ""
         self._update_message = ""
         self._checking_model = False
@@ -208,6 +230,8 @@ class Backend(QObject):
             (self._custom_in, self._on_custom_checked),
             (self._update_in, self._on_update),
             (self._install_in, self._on_install_done),
+            (self._dictation_in, self._on_dictation),
+            (self._dictation_text_in, self._on_dictation_text),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -827,9 +851,74 @@ class Backend(QObject):
 
     # ---------- запись новой комбинации ----------
 
+    # ---------- диктовка ----------
+
+    dictationPhase = Property(str, lambda self: self._dictation_phase, notify=dictationChanged)  # noqa: N815
+    dictationNote = Property(str, lambda self: self._dictation_note, notify=dictationChanged)  # noqa: N815
+    dictationLevel = Property(float, lambda self: self._dictation_level, notify=dictationLevelChanged)  # noqa: N815
+
+    def _on_dictation(self, phase: str) -> None:
+        self._dictation_phase = phase
+        if phase != "listening":
+            self._dictation_level = 0.0
+            self.dictationLevelChanged.emit()
+        self.dictationChanged.emit()
+
+    def _dictation_notice(self, text: str, ms: int = 3500) -> None:
+        """Короткая подпись в плашке диктовки: окно Говорилки в этот момент обычно спрятано, тост не увидят."""
+        self._dictation_note = text
+        self.dictationChanged.emit()
+
+        def clear() -> None:
+            if self._dictation_note == text:
+                self._dictation_note = ""
+                self.dictationChanged.emit()
+
+        QTimer.singleShot(ms, clear)
+
+    def _on_dictation_text(self, text: str) -> None:
+        if not text.strip():
+            self._dictation_notice("Не расслышал. Говорите, пока держите клавиши", 2500)
+            return
+        clipboard = QGuiApplication.clipboard()
+        saved = copy_mime(clipboard.mimeData())
+        clipboard.setText(text)
+        QTimer.singleShot(PASTE_DELAY_MS, lambda: self._paste_dictation(text, saved))
+
+    def _paste_dictation(self, text: str, saved: QMimeData | None) -> None:
+        paste = "⌘V" if sys.platform == "darwin" else "Ctrl+V"
+        try:
+            autopaste.paste_at_cursor()
+        except autopaste.NoPermissionError:
+            self._dictation_notice(f"Текст в буфере: нажмите {paste}. Чтобы вставлялось само, включите «Универсальный доступ»", 6000)
+            return
+        except Exception as exc:  # noqa: BLE001 — не вставилось: текст хотя бы в буфере
+            log.warning("Диктовка не вставилась: %s", exc)
+            self._dictation_notice(f"Текст в буфере: нажмите {paste}")
+            return
+
+        def restore() -> None:  # прежнее содержимое буфера возвращаем, если человек за это время ничего не скопировал
+            clipboard = QGuiApplication.clipboard()
+            if saved is not None and clipboard.text() == text:
+                clipboard.setMimeData(saved)
+
+        QTimer.singleShot(RESTORE_CLIPBOARD_MS, restore)
+
+    captureTarget = Property(str, lambda self: self._capture_target, notify=captureChanged)  # noqa: N815
+
+    @Slot()
+    @safe_slot
+    def startDictationCapture(self) -> None:  # noqa: N802
+        """«Изменить…» у диктовки: следующая нажатая комбинация станет комбинацией диктовки."""
+        self.startCapture()
+        if self._capturing:
+            self._capture_target = "dictation"
+            self.captureChanged.emit()
+
     @Slot()
     @safe_slot
     def startCapture(self) -> None:  # noqa: N802
+        self._capture_target = "hotkey"
         try:
             self._get_keyboard().snapshot()
         except Exception as exc:  # noqa: BLE001
@@ -891,7 +980,11 @@ class Backend(QObject):
             warning = ""
             if conflicts_with_language_switch(chord, windows_language_switch()):
                 warning = "Это же сочетание переключает язык ввода — лучше выбрать другое."
-            self.capturedHotkey.emit(chord_to_string(chord), format_chord(chord), warning)
+            other = getattr(self.controller.settings, "hotkey" if self._capture_target == "dictation" else "dictation_hotkey")
+            if chord_to_string(chord) == other:
+                warning = "Эта комбинация уже занята: у записи и диктовки они должны быть разными."
+            captured = self.capturedDictationHotkey if self._capture_target == "dictation" else self.capturedHotkey
+            captured.emit(chord_to_string(chord), format_chord(chord), warning)
             self.stopCapture()
         elif time.monotonic() > self._capture_deadline:
             self.stopCapture()
@@ -941,6 +1034,10 @@ class Backend(QObject):
         self._schedule_refresh()
 
     def _on_level(self, source: str, level: float) -> None:
+        if source == "dictation":
+            self._dictation_level = min(1.0, level * 6)
+            self.dictationLevelChanged.emit()
+            return
         if source in self._levels:
             self._levels[source] = max(self._levels[source], min(1.0, level * 3))
 
@@ -1044,6 +1141,12 @@ class _Relay(Listener):
 
     def on_hotkey_release(self) -> None:
         self._b._release_in.emit()
+
+    def on_dictation(self, phase: str) -> None:
+        self._b._dictation_in.emit(phase)
+
+    def on_dictation_text(self, text: str) -> None:
+        self._b._dictation_text_in.emit(text)
 
     def on_models_unloaded(self) -> None:
         pass  # веса освобождаются сами, как только на них не остаётся ссылок: явная сборка мусора не нужна

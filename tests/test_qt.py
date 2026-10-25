@@ -986,3 +986,48 @@ def test_click_clears_the_selection_and_ctrl_a_selects_everything(feed, qapp):
     QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(point.x()), int(point.y())))
     pump(qapp, lambda: False, timeout=0.1)
     assert not first.property("selectedText") and not second.property("selectedText")
+
+
+# ---------- диктовка ----------
+
+
+def test_dictated_text_is_pasted_and_the_old_clipboard_comes_back(backend, qapp, monkeypatch):
+    from PySide6.QtGui import QGuiApplication
+
+    from govorilka.qt import autopaste
+
+    clipboard = QGuiApplication.clipboard()
+    clipboard.setText("то, что было в буфере")
+    pasted = []
+    monkeypatch.setattr(autopaste, "paste_at_cursor", lambda: pasted.append(clipboard.text()))
+    backend._on_dictation_text("Купить хлеб.")
+    assert pump(qapp, lambda: pasted == ["Купить хлеб."])  # в момент Ctrl+V в буфере диктовка
+    assert pump(qapp, lambda: clipboard.text() == "то, что было в буфере")  # а потом прежнее содержимое
+
+
+def test_without_accessibility_the_text_stays_in_the_clipboard_with_a_hint(backend, qapp, monkeypatch):
+    from PySide6.QtGui import QGuiApplication
+
+    from govorilka.qt import autopaste
+
+    def refuse():
+        raise autopaste.NoPermissionError("нет доступа")
+
+    monkeypatch.setattr(autopaste, "paste_at_cursor", refuse)
+    backend._on_dictation_text("Купить хлеб.")
+    assert pump(qapp, lambda: "Универсальный доступ" in backend.dictationNote)
+    pump(qapp, lambda: False, timeout=0.8)
+    assert QGuiApplication.clipboard().text() == "Купить хлеб."  # вставить можно руками
+
+
+def test_empty_dictation_says_it_heard_nothing(backend):
+    backend._on_dictation_text("  ")
+    assert "Не расслышал" in backend.dictationNote
+
+
+def test_dictation_phase_and_level_reach_qml(backend):
+    backend._on_dictation("listening")
+    backend._on_level("dictation", 0.1)
+    assert backend.dictationPhase == "listening" and backend.dictationLevel > 0.5
+    backend._on_dictation("")
+    assert backend.dictationPhase == "" and backend.dictationLevel == 0

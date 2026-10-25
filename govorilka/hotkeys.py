@@ -37,7 +37,9 @@ ALIASES = {
     "meta": "cmd",
 }
 DEFAULT_HOTKEY = "alt+cmd" if IS_MAC else "ctrl+shift"
+DEFAULT_DICTATION_HOTKEY = "ctrl+alt"  # Mac: Control + Option. Не совпадает с основной ни на одной системе
 HOLD_S = 0.5  # сколько держать комбинацию из одних модификаторов
+DICTATION_HOLD_S = 0.25  # диктовка начинается быстрее: человек уже готов говорить
 POLL_S = 0.05
 
 _LETTERS = "abcdefghijklmnopqrstuvwxyz"
@@ -151,6 +153,11 @@ class HotkeyDetector:
             self._fired = True
             return True
         return False
+
+
+def chord_held(chord: Chord, snap: KeySnapshot) -> bool:
+    """Комбинация всё ещё зажата целиком (лишние модификаторы не мешают)."""
+    return chord.mods <= snap.mods and (chord.key is None or chord.key in snap.keys)
 
 
 class ChordRecorder:
@@ -344,6 +351,8 @@ class HotkeyWatcher:
         keyboard: Keyboard | None = None,
         clock: Callable[[], float] | None = None,
         on_release: Callable[[], None] = lambda: None,
+        on_dictate_start: Callable[[], None] = lambda: None,
+        on_dictate_stop: Callable[[bool], None] = lambda _cancelled: None,
     ) -> None:
         import time
 
@@ -356,6 +365,12 @@ class HotkeyWatcher:
         self._keyboard = keyboard
         self._clock = clock or time.monotonic
         self._detector: HotkeyDetector | None = None
+        # Диктовка: своя комбинация. Начало — после короткого удержания, конец — как только её отпустили
+        # (а не когда отпущено всё). Если, держа её, начали печатать, это не диктовка: отменяем.
+        self._dictation: HotkeyDetector | None = None
+        self._dictating = False
+        self._on_dictate_start = on_dictate_start
+        self._on_dictate_stop = on_dictate_stop
         self._paused = threading.Event()  # пока в настройках записывают новую комбинацию, старая не должна срабатывать
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -376,6 +391,8 @@ class HotkeyWatcher:
         with self._lock:  # начинаем с чистого листа: клавиши, зажатые во время паузы, не считаются нажатием
             if self._detector is not None:
                 self._detector = HotkeyDetector(self._detector.chord, self._detector.hold_s)
+            if self._dictation is not None:
+                self._dictation = HotkeyDetector(self._dictation.chord, self._dictation.hold_s)
         self._paused.clear()
 
     def set_chord(self, chord: Chord | None) -> None:
@@ -383,13 +400,31 @@ class HotkeyWatcher:
         with self._lock:
             self._detector = HotkeyDetector(chord) if chord else None
 
+    def set_dictation_chord(self, chord: Chord | None) -> None:
+        """Комбинация диктовки; None выключает диктовку."""
+        with self._lock:
+            self._dictation = HotkeyDetector(chord, DICTATION_HOLD_S) if chord else None
+
+    def wait_released(self, timeout: float = 1.5) -> None:
+        """Ждёт, пока отпустят модификаторы: вставка Ctrl+V при зажатом Win открыла бы журнал буфера обмена."""
+        import time
+
+        end = time.monotonic() + timeout
+        while self._keyboard is not None and time.monotonic() < end:
+            try:
+                if not self._keyboard.snapshot().mods:
+                    return
+            except Exception:  # noqa: BLE001 — не смогли прочитать клавиши: просто не ждём
+                return
+            time.sleep(POLL_S)
+
     def _run(self) -> None:
         reported = False
         failures = 0
         while not self._stop.wait(POLL_S):
             with self._lock:
-                detector = self._detector
-            if detector is None or self._paused.is_set():
+                detector, dictation = self._detector, self._dictation
+            if (detector is None and dictation is None) or self._paused.is_set():
                 continue
             try:
                 if self._keyboard is None:
@@ -397,7 +432,10 @@ class HotkeyWatcher:
                     if hasattr(self._keyboard, "light"):
                         self._keyboard.light = True  # Mac: не опрашивать все клавиши, пока нет модификаторов
                 snap = self._keyboard.snapshot()
-                fired = detector.update(snap, self._clock())
+                now = self._clock()
+                fired = detector.update(snap, now) if detector is not None else False
+                if dictation is not None:
+                    self._watch_dictation(dictation, snap, now)
             except Exception as exc:  # noqa: BLE001 — опрос не должен умирать молча, но и не должен падать
                 failures += 1
                 if failures == 1 or failures % 30 == 0:  # раз в минуту, а не каждые две секунды
@@ -419,3 +457,23 @@ class HotkeyWatcher:
                     self._on_release()
                 except Exception:
                     log.exception("Ошибка в обработчике отпускания горячей клавиши")
+
+    def _watch_dictation(self, detector: HotkeyDetector, snap: KeySnapshot, now: float) -> None:
+        chord = detector.chord
+        if detector.update(snap, now):
+            self._dictating = True
+            self._call(self._on_dictate_start)
+            return
+        if not self._dictating:
+            return
+        typing = chord.key is None and bool(snap.keys)  # держа модификаторы, нажали букву: это сочетание, не диктовка
+        if typing or not chord_held(chord, snap):
+            self._dictating = False
+            self._call(lambda: self._on_dictate_stop(typing))
+
+    @staticmethod
+    def _call(handler: Callable[[], None]) -> None:
+        try:
+            handler()
+        except Exception:
+            log.exception("Ошибка в обработчике диктовки")

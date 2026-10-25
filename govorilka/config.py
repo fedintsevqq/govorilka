@@ -9,7 +9,7 @@ import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from govorilka.hotkeys import DEFAULT_HOTKEY
+from govorilka.hotkeys import DEFAULT_DICTATION_HOTKEY, DEFAULT_HOTKEY
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +114,8 @@ class Settings:
     hotkey: str = DEFAULT_HOTKEY  # «ctrl+shift», «alt+cmd», «ctrl+alt+r»
     show_indicator: bool = True  # маленькая плашка «● Запись» поверх окон
     hotkey_action: str = "menu"  # menu — круговое меню у курсора, record — сразу старт/стоп записи
+    dictation_enabled: bool = True  # диктовка в любое поле: зажал комбинацию, сказал, отпустил — текст у курсора
+    dictation_hotkey: str = DEFAULT_DICTATION_HOTKEY
     reduce_motion: bool = False  # вместо движения — короткое растворение
     theme: str = "system"  # system / dark / light
     check_updates: bool = True  # раз в сутки спрашивать у GitHub, не вышла ли новая версия

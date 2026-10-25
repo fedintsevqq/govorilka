@@ -128,6 +128,25 @@ def main(out: Path) -> None:
             backend._set_status("Скачиваю обновление: 61 из 168 МБ (36%)")
         backend.updateChanged.emit()
 
+    def dictation(phase: str, level: float = 0.0, note: str = "") -> None:
+        backend._on_dictation(phase)
+        backend._dictation_level = level
+        backend.dictationLevelChanged.emit()
+        backend._dictation_note = note
+        backend.dictationChanged.emit()
+
+    pill = lambda: root.findChild(QObject, "dictationPill") or next(  # noqa: E731
+        w for w in app.topLevelWindows() if w.objectName() == "dictationPill"
+    )
+    for phase, level, note, name in [
+        ("listening", 0.15, "", "8-dictation-quiet"),
+        ("listening", 0.8, "", "8-dictation-speaking"),
+        ("recognizing", 0.0, "", "8-dictation-recognizing"),
+        ("", 0.0, "Текст в буфере: нажмите ⌘V. Чтобы вставлялось само, включите «Универсальный доступ»", "8-dictation-note"),
+    ]:
+        steps.append(lambda phase=phase, level=level, note=note: dictation(phase, level, note))
+        steps.append(lambda name=name: shoot(backend, pill(), out / f"{name}.png"))
+    steps.append(lambda: dictation("", 0.0, ""))
     steps.append(lambda: offer_update(False))
     steps.append(lambda: shoot(backend, root, out / "6-update.png"))
     steps.append(lambda: offer_update(True))

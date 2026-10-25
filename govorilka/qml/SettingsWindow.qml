@@ -50,6 +50,8 @@ Window {
     }   // как было при открытии: сохраняем только то, что поменяли здесь
     property bool autostart: false
     property string hotkeyLabel: ""
+    property string dictationLabel: ""
+    property string dictationWarning: ""
     property string hotkeyWarning: ""
     readonly property bool hasDesktopApp: ["chatgpt", "claude", "claude_code"].indexOf(draft.ai_target) >= 0
     readonly property bool claudeCode: draft.ai_target === "claude_code"   // папка нужна только Claude Code
@@ -61,6 +63,8 @@ Window {
         autostart = backend.autostart
         hotkeyLabel = draft.hotkeyLabel
         hotkeyWarning = ""
+        dictationLabel = draft.dictationLabel
+        dictationWarning = ""
         promptField.text = draft.claude_prompt
         folderField.text = draft.transcripts_dir
         claudeField.text = draft.claude_workdir
@@ -91,6 +95,11 @@ Window {
             win.setValue("hotkey", chord)
             win.hotkeyLabel = label
             win.hotkeyWarning = warning
+        }
+        function onCapturedDictationHotkey(chord, label, warning) {
+            win.setValue("dictation_hotkey", chord)
+            win.dictationLabel = label
+            win.dictationWarning = warning
         }
     }
 
@@ -218,21 +227,23 @@ Window {
                         implicitHeight: 44
                         radius: 14
                         color: Theme.core
-                        border.color: backend.capturing ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.7) : Theme.shellLine
+                        readonly property bool mine: backend.capturing && backend.captureTarget === "hotkey"
+                        border.color: mine ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.7) : Theme.shellLine
                         Row {
                             anchors.verticalCenter: parent.verticalCenter
                             x: 14
                             spacing: 6
-                            visible: !backend.capturing
+                            visible: !parent.mine
                             Repeater { model: win.hotkeyLabel.split(" + "); KeyCap { required property string modelData; text: modelData } }
                         }
-                        Text { visible: backend.capturing; x: 14; anchors.verticalCenter: parent.verticalCenter; text: "Нажмите комбинацию и отпустите…"; font.pixelSize: 14; color: Theme.accent }
+                        Text { visible: parent.mine; x: 14; anchors.verticalCenter: parent.verticalCenter; text: "Нажмите комбинацию и отпустите…"; font.pixelSize: 14; color: Theme.accent }
                     }
                     PillButton {
-                        text: backend.capturing ? "Отмена" : "Изменить…"
-                        tip: backend.capturing ? "Оставить прежнюю комбинацию" : "Задать новую комбинацию: нажмите нужные клавиши и отпустите"
+                        readonly property bool mine: backend.capturing && backend.captureTarget === "hotkey"
+                        text: mine ? "Отмена" : "Изменить…"
+                        tip: mine ? "Оставить прежнюю комбинацию" : "Задать новую комбинацию: нажмите нужные клавиши и отпустите"
                         implicitHeight: 44
-                        onClicked: backend.capturing ? backend.stopCapture() : backend.startCapture()
+                        onClicked: mine ? backend.stopCapture() : backend.startCapture()
                     }
                 }
                 Text { text: "Сейчас нажато: " + (backend.liveKeys || "ничего"); font.pixelSize: 12; color: Theme.textTertiary }
@@ -257,6 +268,61 @@ Window {
                     id: actionBox
                     model: ["Открыть круговое меню у курсора", "Сразу начать или остановить запись"]
                     onActivated: win.setValue("hotkey_action", currentIndex === 1 ? "record" : "menu")
+                }
+            }
+
+            Section {
+                heading: "Диктовка"
+                ToggleRow {
+                    title: "Диктовка в любое поле"
+                    hint: "Зажмите комбинацию и говорите. Отпустите — текст появится там, где стоит курсор: в браузере, Claude, Discord, Telegram, Word. Внизу экрана в это время видна плашка с голосом."
+                    checked: win.draft.dictation_enabled === true
+                    onToggled: (v) => win.setValue("dictation_enabled", v)
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    opacity: win.draft.dictation_enabled ? 1 : 0.45
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        radius: 14
+                        color: Theme.core
+                        readonly property bool mine: backend.capturing && backend.captureTarget === "dictation"
+                        border.color: mine ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.7) : Theme.shellLine
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: 14
+                            spacing: 6
+                            visible: !parent.mine
+                            Repeater { model: win.dictationLabel.split(" + "); KeyCap { required property string modelData; text: modelData } }
+                        }
+                        Text { visible: parent.mine; x: 14; anchors.verticalCenter: parent.verticalCenter; text: "Нажмите комбинацию и отпустите…"; font.pixelSize: 14; color: Theme.accent }
+                    }
+                    PillButton {
+                        readonly property bool mine: backend.capturing && backend.captureTarget === "dictation"
+                        text: mine ? "Отмена" : "Изменить…"
+                        tip: mine ? "Оставить прежнюю комбинацию" : "Задать комбинацию диктовки: нажмите нужные клавиши и отпустите"
+                        implicitHeight: 44
+                        onClicked: mine ? backend.stopCapture() : backend.startDictationCapture()
+                    }
+                }
+                Text {
+                    visible: win.dictationWarning !== ""
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: win.dictationWarning
+                    font.pixelSize: 13
+                    color: Theme.pause
+                }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: Qt.platform.os === "osx"
+                          ? "Чтобы текст вставлялся сам, macOS нужен «Универсальный доступ» для Говорилки. Без него текст окажется в буфере: нажмите ⌘V."
+                          : "Прежнее содержимое буфера обмена вернётся на место сразу после вставки."
+                    font.pixelSize: 12
+                    color: Theme.textTertiary
                 }
             }
 

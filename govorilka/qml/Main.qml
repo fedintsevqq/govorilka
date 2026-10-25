@@ -566,6 +566,7 @@ ApplicationWindow {
     SettingsWindow { id: settingsWindow; onTourRequested: { window.showWindow(); tour.begin() } }
     RadialMenu { id: radial; practice: tour.opened }
     RecordingPill { mainHidden: !window.visible || window.visibility === Window.Minimized || !window.active }
+    DictationPill {}
 
     Connections {
         target: backend

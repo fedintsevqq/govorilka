@@ -13,7 +13,7 @@ import logging
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
@@ -24,11 +24,13 @@ from urllib.parse import quote
 
 from govorilka import ai, desktop_apps, models, updates, version
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
+from govorilka.dictation import Dictation
 from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
 from govorilka.filejob import CANCELLED, FileJob
 from govorilka.hotkeys import (
     HotkeyWatcher,
+    chord_to_string,
     conflicts_with_language_switch,
     format_chord,
     input_monitoring_status,
@@ -74,6 +76,18 @@ class Listener:
     def on_finished(self, path: Path | None, message: str) -> None: ...
     def on_update(self, info: object | None, error: str | None, manual: bool) -> None: ...  # UpdateInfo, текст ошибки
     def on_models_unloaded(self) -> None: ...  # сборку мусора надо делать в главном потоке: из фонового она трогает объекты Qt
+    def on_dictation(self, phase: str) -> None: ...  # "loading" / "listening" / "recognizing" / "" — диктовка закончилась
+    def on_dictation_text(self, text: str) -> None: ...  # распознанный текст: окно вставит его у курсора
+
+
+@dataclass
+class _DictationRun:
+    """Одна диктовка от нажатия до вставки текста."""
+
+    released: threading.Event = field(default_factory=threading.Event)
+    dictation: Dictation | None = None
+    cancelled: bool = False
+    finishing: bool = False
 
 
 @dataclass(frozen=True)
@@ -108,10 +122,14 @@ class Controller:
         self._closing = False  # идёт выход: новые записи не начинаем
         self._probe_country = ai.probe_country  # подменяются в тестах: настоящие проверки ходят в сеть
         self._reachable = ai.reachable
+        self._dictation_run: _DictationRun | None = None
+        self._dictation_lock = threading.Lock()
         self.hotkeys = hotkeys or HotkeyWatcher(
             on_trigger=listener.on_hotkey,
             on_error=listener.on_status,
             on_release=listener.on_hotkey_release,
+            on_dictate_start=self.start_dictation,
+            on_dictate_stop=self.stop_dictation,
         )
         self.apply_hotkey()
 
@@ -255,6 +273,8 @@ class Controller:
     def unload_models(self) -> bool:
         """Выгружает модели, если ими никто не пользуется. True — выгрузили."""
         if self.engines is None or self.state != AppState.IDLE or self.busy or self.session is not None:
+            return False
+        if self._dictation_run is not None:
             return False
         self.engines = None
         self._unload_timer = None
@@ -663,6 +683,7 @@ class Controller:
         self.update_settings(replace(self.settings, **changes))  # type: ignore[arg-type]
 
     def apply_hotkey(self) -> None:
+        self._apply_dictation_hotkey()
         if not self.settings.hotkey_enabled:
             self.hotkeys.set_chord(None)
             return
@@ -671,6 +692,106 @@ class Controller:
         except ValueError as exc:
             self.hotkeys.set_chord(None)
             self.listener.on_status(f"Горячая клавиша не включена: {exc}")
+
+    def _apply_dictation_hotkey(self) -> None:
+        set_dictation = getattr(self.hotkeys, "set_dictation_chord", None)
+        if set_dictation is None:  # подменённые в тестах горячие клавиши
+            return
+        if not self.settings.dictation_enabled:
+            set_dictation(None)
+            return
+        try:
+            chord = parse_chord(self.settings.dictation_hotkey)
+        except ValueError as exc:
+            set_dictation(None)
+            self.listener.on_status(f"Диктовка не включена: {exc}")
+            return
+        if self.settings.hotkey_enabled and self.settings.hotkey == chord_to_string(chord):
+            set_dictation(None)
+            self.listener.on_status("Диктовка не включена: у неё та же комбинация, что у записи. Задайте другую в настройках")
+            return
+        set_dictation(chord)
+
+    # ---------- диктовка ----------
+
+    def start_dictation(self) -> None:
+        """Зажали комбинацию диктовки (вызывается из потока горячих клавиш)."""
+        with self._dictation_lock:
+            if self._closing or self._dictation_run is not None or self.busy:
+                return
+            run = _DictationRun()
+            self._dictation_run = run
+        self.listener.on_dictation("loading" if self.engines is None else "listening")
+        threading.Thread(target=self._open_dictation, args=(run,), name="dictation", daemon=True).start()
+
+    def stop_dictation(self, cancelled: bool = False) -> None:
+        """Отпустили комбинацию: дораспознаём и отдаём текст. cancelled — начали печатать: текст не нужен."""
+        with self._dictation_lock:
+            run = self._dictation_run
+            if run is None:
+                return
+            run.released.set()
+            run.cancelled = run.cancelled or cancelled
+            ready = run.dictation is not None
+        if ready:
+            threading.Thread(target=self._finish_dictation, args=(run,), name="dictation-finish", daemon=True).start()
+
+    def _open_dictation(self, run: _DictationRun) -> None:
+        try:
+            engines = self._ensure_engines()
+            dictation = Dictation(
+                engines,
+                on_level=lambda level: self.listener.on_level("dictation", level),
+                on_limit=self.stop_dictation,
+            )
+            dictation.start()
+        except PermissionDeniedError as exc:
+            self._end_dictation(run)
+            self.listener.on_permission(exc)
+            return
+        except Exception as exc:  # noqa: BLE001 — нет микрофона, модели не скачались: человек должен узнать
+            log.exception("Диктовка не началась")
+            self._end_dictation(run)
+            self.listener.on_error(f"Диктовка не началась: {exc}")
+            return
+        with self._dictation_lock:
+            run.dictation = dictation
+            released = run.released.is_set()
+        if released:  # отпустили, пока открывался микрофон
+            self._finish_dictation(run)
+        else:
+            self.listener.on_dictation("listening")
+
+    def _finish_dictation(self, run: _DictationRun) -> None:
+        with self._dictation_lock:
+            if run.finishing or run.dictation is None:
+                return
+            run.finishing = True
+        if run.cancelled:
+            run.dictation.cancel()
+            self._end_dictation(run)
+            return
+        self.listener.on_dictation("recognizing")
+        try:
+            text = run.dictation.finish()
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Диктовка не распознана")
+            self._end_dictation(run)
+            self.listener.on_error(f"Не получилось распознать диктовку: {exc}")
+            return
+        wait_released = getattr(self.hotkeys, "wait_released", None)
+        if wait_released is not None:
+            wait_released()
+        self._end_dictation(run)
+        self.listener.on_dictation_text(text)
+
+    def _end_dictation(self, run: _DictationRun) -> None:
+        with self._dictation_lock:
+            if self._dictation_run is run:
+                self._dictation_run = None
+        self.listener.on_dictation("")
+        if self.state == AppState.IDLE and self.session is None:
+            self._schedule_unload()
 
     @staticmethod
     def autostart_enabled() -> bool:
