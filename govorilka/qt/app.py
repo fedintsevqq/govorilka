@@ -69,7 +69,69 @@ def create_engine(backend: Backend, strict: bool = False) -> QQmlApplicationEngi
     return engine
 
 
-def run(background: bool = False, updated: bool = False) -> int:
+LIVE_SKIP = ("Пауза", "Отметка", "Расшифровать", "Выйти", "Сохранить как", "Открыть файл", "Открыть папку", "Открыть страницу", "Скачать",
+             "Установить", "Отправить", "Скопировать для", "Удалить", "Сбросить", "Изменить…", "Выбрать папку")
+
+
+def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None:
+    """Самопроверка в настоящем окне (--selftest-live): нажимаем все безопасные кнопки главного окна и настроек,
+    потом даём поработать фоновым потокам. Упадёт — CI покажет crash.log с трассировкой потоков."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    from govorilka.config import DATA_DIR
+
+    report = DATA_DIR / "selftest-live.txt"
+    clicked: list[str] = []
+
+    def buttons(window: QQuickWindow) -> list:
+        found = []
+
+        def walk(item) -> None:  # noqa: ANN001
+            for child in item.childItems():
+                name = child.metaObject().className()
+                if "RecordButton" in name:  # запись на сервере сборки запросила бы микрофон и ждала ответа
+                    walk(child)
+                    continue
+                if child.isVisible() and ("Button" in name or "ChipToggle" in name) and child.isEnabled():
+                    label = str(child.property("text") or child.property("tip") or child.property("iconName") or name)
+                    if not any(word in label for word in LIVE_SKIP) and child.width() > 4:
+                        found.append((label, child))
+                walk(child)
+
+        walk(window.contentItem())
+        return found
+
+    def click_all(window: QQuickWindow, where: str) -> None:
+        for label, item in buttons(window)[:40]:
+            centre = item.mapToScene(item.boundingRect().center())
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                             QPoint(int(centre.x()), int(centre.y())))
+            clicked.append(f"{where}: {label}")
+            for _ in range(10):
+                app.processEvents()
+            QTest.keyClick(window, Qt.Key.Key_Escape)  # закрыть открывшееся меню или окно
+            for _ in range(5):
+                app.processEvents()
+
+    def step() -> None:
+        backend.finishTour()
+        click_all(root, "окно")
+        settings = root.findChild(QObject, "settings")
+        if settings is not None:
+            settings.open()
+            for _ in range(20):
+                app.processEvents()
+            click_all(settings, "настройки")
+            settings.close()
+        report.write_text("OK\n" + "\n".join(clicked) + "\n", encoding="utf-8")
+        log.info("Самопроверка в окне: нажато кнопок — %d", len(clicked))
+
+    QTimer.singleShot(3000, step)
+    QTimer.singleShot(20000, app.quit)
+
+
+def run(background: bool = False, updated: bool = False, live_check: bool = False) -> int:
     holder: list[Backend] = []
     lock = single_instance.acquire(
         lambda: holder[0].windowRequested.emit() if holder else None, notify_existing=not background
@@ -123,6 +185,8 @@ def run(background: bool = False, updated: bool = False) -> int:
         installer.cleanup_after_update()
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.flush_startup_notices)
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.controller.prefetch_models)  # первый запуск: модели качаются сразу
+    if live_check:
+        _live_check(app, root, backend)
     app.aboutToQuit.connect(lambda: (backend.shutdown(), tray.hide() if tray else None, lock.close()))
     code = app.exec()
     del engine

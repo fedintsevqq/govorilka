@@ -136,6 +136,16 @@ jobs:
           code=$?
           cat ci-data/selftest-ui.txt
           exit $code
+      # настоящее окно macOS (не offscreen): программа сама жмёт кнопки и 20 секунд работает. Сбой — трассировка из crash.log
+      - name: Self-test live window (click every safe button)
+        run: |
+          set +e
+          dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-live
+          code=$?
+          cat ci-data/selftest-live.txt 2>/dev/null
+          echo "--- crash.log"; cat ci-data/crash.log 2>/dev/null
+          echo "--- log"; tail -n 60 ci-data/govorilka.log 2>/dev/null
+          [ "$code" = 0 ] && grep -q '^OK' ci-data/selftest-live.txt
       - name: Build dmg
         run: |
           suffix=$([ "$GOVORILKA_ARCH" = arm64 ] && echo apple-silicon || echo intel)
