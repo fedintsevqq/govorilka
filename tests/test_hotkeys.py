@@ -325,3 +325,19 @@ def test_mac_light_poll_skips_the_key_scan_until_a_modifier_is_held():
     keyboard._flags = lambda source: 0
     keyboard.snapshot()
     assert len(scanned) > 100
+
+
+def test_mac_mode_polls_only_when_the_window_ticks():
+    """На Mac клавиатуру опрашивает главный поток (таймер окна): своего потока у наблюдателя нет."""
+    fired = []
+    clock = iter(x * 0.2 for x in range(1000))
+    keyboard = ScriptedKeyboard([snap("ctrl+shift")])
+    watcher = HotkeyWatcher(lambda: fired.append(1), keyboard=keyboard, clock=lambda: next(clock), external_ticks=True)
+    watcher.set_chord(parse_chord("ctrl+shift"))
+    watcher.start()
+    time.sleep(0.3)
+    assert keyboard.calls == 0 and not watcher._thread.is_alive()  # сам не опрашивает
+    for _ in range(5):
+        watcher.tick()
+    assert fired == [1] and keyboard.calls == 5
+    watcher.stop()

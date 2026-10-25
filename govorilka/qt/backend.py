@@ -57,6 +57,7 @@ LEVEL_DECAY = 0.86
 ELAPSED_TICK_MS = 200
 REFRESH_MS = 50  # реплики, пришедшие почти одновременно, рисуем одним обновлением
 CAPTURE_TICK_MS = 40
+HOTKEY_TICK_MS = 50  # 20 раз в секунду, как и фоновый опрос на Windows
 CAPTURE_TIMEOUT_S = 10.0
 PASTE_DELAY_MS = 60  # буфер обмена успевает обновиться до Ctrl+V
 RESTORE_CLIPBOARD_MS = 600  # приложение успевает забрать текст из буфера, потом возвращаем прежний
@@ -295,6 +296,10 @@ class Backend(QObject):
 
     def start(self) -> None:
         self.controller.start()
+        if getattr(self.controller.hotkeys, "needs_ticks", False):
+            # Mac: горячую клавишу опрашиваем из главного потока — из фонового macOS прерывает программу
+            self._hotkey_timer = QTimer(self, interval=HOTKEY_TICK_MS, timeout=self.controller.hotkeys.tick)
+            self._hotkey_timer.start()
         self._startup_notices = self.controller.startup_notices()
         if self.controller.check_signing_change():
             self._startup_notices.append(

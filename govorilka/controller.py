@@ -133,6 +133,7 @@ class Controller:
             on_release=listener.on_hotkey_release,
             on_dictate_start=self.start_dictation,
             on_dictate_stop=self.stop_dictation,
+            external_ticks=sys.platform == "darwin",  # Mac: клавиатуру опрашивает главный поток (таймер окна)
         )
         self.apply_hotkey()
 

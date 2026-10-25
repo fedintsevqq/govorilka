@@ -375,6 +375,7 @@ class HotkeyWatcher:
         on_release: Callable[[], None] = lambda: None,
         on_dictate_start: Callable[[], None] = lambda: None,
         on_dictate_stop: Callable[[bool], None] = lambda _cancelled: None,
+        external_ticks: bool = False,
     ) -> None:
         import time
 
@@ -397,9 +398,17 @@ class HotkeyWatcher:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="hotkey-watcher", daemon=True)
+        # Mac: клавиатуру можно опрашивать только из главного потока — из фонового новые macOS прерывают программу
+        # (Aborted / сбой памяти, как только окно обрабатывает щелчок). Тогда опрос ведёт таймер окна: tick().
+        self.needs_ticks = external_ticks
+        self._last_snap = KeySnapshot()
+        self._reported = False
+        self._failures = 0
+        self._retry_at = 0.0
 
     def start(self) -> None:
-        self._thread.start()
+        if not self.needs_ticks:
+            self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -428,57 +437,60 @@ class HotkeyWatcher:
             self._dictation = HotkeyDetector(chord, DICTATION_HOLD_S) if chord else None
 
     def wait_released(self, timeout: float = 1.5) -> None:
-        """Ждёт, пока отпустят модификаторы: вставка Ctrl+V при зажатом Win открыла бы журнал буфера обмена."""
+        """Ждёт, пока отпустят модификаторы: вставка Ctrl+V при зажатом Win открыла бы журнал буфера обмена.
+        Смотрит на последний опрос, а не опрашивает сам: на Mac клавиатуру читают только из главного потока."""
         import time
 
         end = time.monotonic() + timeout
-        while self._keyboard is not None and time.monotonic() < end:
-            try:
-                if not self._keyboard.snapshot().mods:
-                    return
-            except Exception:  # noqa: BLE001 — не смогли прочитать клавиши: просто не ждём
+        while time.monotonic() < end:
+            if not self._last_snap.mods:
                 return
             time.sleep(POLL_S)
 
     def _run(self) -> None:
-        reported = False
-        failures = 0
         while not self._stop.wait(POLL_S):
-            with self._lock:
-                detector, dictation = self._detector, self._dictation
-            if (detector is None and dictation is None) or self._paused.is_set():
-                continue
+            self.tick()
+
+    def tick(self) -> None:
+        """Один опрос клавиатуры. В потоке (Windows) — 20 раз в секунду, на Mac — из таймера окна."""
+        if self._stop.is_set() or self._clock() < self._retry_at:
+            return
+        with self._lock:
+            detector, dictation = self._detector, self._dictation
+        if (detector is None and dictation is None) or self._paused.is_set():
+            return
+        try:
+            if self._keyboard is None:
+                self._keyboard = system_keyboard()
+                if hasattr(self._keyboard, "light"):
+                    self._keyboard.light = True  # Mac: не опрашивать все клавиши, пока нет модификаторов
+            snap = self._keyboard.snapshot()
+            self._last_snap = snap
+            now = self._clock()
+            fired = detector.update(snap, now) if detector is not None else False
+            if dictation is not None:
+                self._watch_dictation(dictation, snap, now)
+        except Exception as exc:  # noqa: BLE001 — опрос не должен умирать молча, но и не должен падать
+            self._failures += 1
+            if self._failures == 1 or self._failures % 30 == 0:  # раз в минуту, а не каждые две секунды
+                log.exception("Не получается читать состояние клавиш (подряд сбоев: %d)", self._failures)
+            if not self._reported:
+                self._reported = True
+                self._on_error(f"Горячая клавиша не работает: {exc}")
+            self._retry_at = self._clock() + 2.0
+            return
+        if fired:
+            self._awaiting_release = True
             try:
-                if self._keyboard is None:
-                    self._keyboard = system_keyboard()
-                    if hasattr(self._keyboard, "light"):
-                        self._keyboard.light = True  # Mac: не опрашивать все клавиши, пока нет модификаторов
-                snap = self._keyboard.snapshot()
-                now = self._clock()
-                fired = detector.update(snap, now) if detector is not None else False
-                if dictation is not None:
-                    self._watch_dictation(dictation, snap, now)
-            except Exception as exc:  # noqa: BLE001 — опрос не должен умирать молча, но и не должен падать
-                failures += 1
-                if failures == 1 or failures % 30 == 0:  # раз в минуту, а не каждые две секунды
-                    log.exception("Не получается читать состояние клавиш (подряд сбоев: %d)", failures)
-                if not reported:
-                    reported = True
-                    self._on_error(f"Горячая клавиша не работает: {exc}")
-                self._stop.wait(2.0)
-                continue
-            if fired:
-                self._awaiting_release = True
-                try:
-                    self._on_trigger()
-                except Exception:
-                    log.exception("Ошибка в обработчике горячей клавиши")
-            elif self._awaiting_release and not snap.mods and not snap.keys:
-                self._awaiting_release = False
-                try:
-                    self._on_release()
-                except Exception:
-                    log.exception("Ошибка в обработчике отпускания горячей клавиши")
+                self._on_trigger()
+            except Exception:
+                log.exception("Ошибка в обработчике горячей клавиши")
+        elif self._awaiting_release and not snap.mods and not snap.keys:
+            self._awaiting_release = False
+            try:
+                self._on_release()
+            except Exception:
+                log.exception("Ошибка в обработчике отпускания горячей клавиши")
 
     def _watch_dictation(self, detector: HotkeyDetector, snap: KeySnapshot, now: float) -> None:
         chord = detector.chord
