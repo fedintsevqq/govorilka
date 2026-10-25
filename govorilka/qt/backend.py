@@ -40,10 +40,10 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai, asr_models, features, installer, permissions, updates, version
+from govorilka import ai, asr_models, assistant, features, installer, permissions, secrets_store, updates, version
 from govorilka import models as model_files  # имя models занято свойством со списком моделей
 from govorilka import summary
-from govorilka.qt import autopaste, mac_overlay
+from govorilka.qt import autopaste, capture_guard, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
 from govorilka.transcript import Transcript, format_offset
@@ -159,6 +159,8 @@ class Backend(QObject):
     _hotkey_in = Signal()
     _release_in = Signal()
     _dictation_in = Signal(str)
+    _assistant_in = Signal(str, str)
+    assistantChanged = Signal()  # noqa: N815
     _summary_status_in = Signal(str)
     _summary_done_in = Signal(str, str)
     _llm_progress_in = Signal(float)
@@ -226,6 +228,13 @@ class Backend(QObject):
         self._ram_gb = summary.total_ram_gb()
         self._model_download = ""
         self._model_fraction = 0.0
+        self._assist_phase = ""
+        self._assist_question = ""
+        self._assist_answer = ""
+        self._assist_note = ""
+        self._assist_hidden = False
+        self._assist_protection = ""
+        self._assist_key_saved: bool | None = None
         self._dictation_phase = ""
         self._dictation_note = ""
         self._dictation_level = 0.0
@@ -265,6 +274,7 @@ class Backend(QObject):
             (self._update_in, self._on_update),
             (self._install_in, self._on_install_done),
             (self._dictation_in, self._on_dictation),
+            (self._assistant_in, self._on_assistant),
             (self._summary_status_in, self._on_summary_status),
             (self._summary_done_in, self._on_summary_done),
             (self._llm_progress_in, self._on_llm_progress),
@@ -370,6 +380,105 @@ class Backend(QObject):
         return asr_models.catalog_entries() + [{"id": CUSTOM_MODEL_ITEM, "label": "Своя модель…"}]
 
     models = Property("QVariantList", _get_models, constant=True)
+
+    # ---------- подсказки в звонке ----------
+
+    assistantPhase = Property(str, lambda self: self._assist_phase, notify=assistantChanged)  # noqa: N815
+    assistantQuestion = Property(str, lambda self: self._assist_question, notify=assistantChanged)  # noqa: N815
+    assistantAnswer = Property(str, lambda self: self._assist_answer, notify=assistantChanged)  # noqa: N815
+    assistantNote = Property(str, lambda self: self._assist_note, notify=assistantChanged)  # noqa: N815
+    assistantHidden = Property(bool, lambda self: self._assist_hidden, notify=assistantChanged)  # noqa: N815
+    assistantProtection = Property(str, lambda self: self._assist_protection, notify=assistantChanged)  # noqa: N815
+    apiPresets = Property(  # noqa: N815
+        "QVariantList",
+        lambda self: [{"id": p.key, "label": p.title, "url": p.base_url, "model": p.model, "hint": p.hint} for p in assistant.API_PRESETS],
+        constant=True,
+    )
+
+    def _on_assistant(self, kind: str, text: str) -> None:
+        if kind == "off":
+            self._assist_phase, self._assist_question, self._assist_answer, self._assist_note = "", "", "", ""
+            self._assist_hidden = False
+        elif kind == "status":
+            self._assist_phase, self._assist_note = "loading", text
+        elif kind == "ready":
+            self._assist_phase, self._assist_note = "ready", "Слушаю вопросы собеседника"
+        elif kind == "question":
+            self._assist_phase, self._assist_question, self._assist_answer = "thinking", text, ""
+        elif kind == "answer":
+            self._assist_phase, self._assist_answer = "answering", text
+        elif kind == "done":
+            self._assist_phase, self._assist_answer = "ready", text or self._assist_answer
+        elif kind == "error":
+            self._assist_phase, self._assist_note = "error", text
+        elif kind in ("check", "check-error"):
+            self.toast.emit(text, "success" if kind == "check" else "error")
+            return
+        self.assistantChanged.emit()
+
+    @Slot()
+    @safe_slot
+    def assistantAnswerLast(self) -> None:  # noqa: N802
+        """Кнопка «Ответить»: на последнюю фразу собеседника, даже если она не похожа на вопрос."""
+        if not self.controller.assistant_answer_last():
+            self.toast.emit("Собеседник ещё ничего не сказал", "info")
+
+    @Slot(bool)
+    @safe_slot
+    def setAssistantHidden(self, hidden: bool) -> None:  # noqa: N802
+        self._assist_hidden = hidden
+        self.assistantChanged.emit()
+
+    @Slot()
+    @safe_slot
+    def copyAssistantAnswer(self) -> None:  # noqa: N802
+        if self._assist_answer:
+            QGuiApplication.clipboard().setText(self._assist_answer)
+
+    @Slot(QWindow, bool)
+    @safe_slot
+    def protectWindow(self, window: QWindow, hidden: bool) -> None:  # noqa: N802
+        """Прячет окно подсказок от демонстрации экрана (или возвращает как было)."""
+        self._assist_protection = capture_guard.protect(int(window.winId()), hidden) if hidden else ""
+        if not hidden:
+            capture_guard.protect(int(window.winId()), False)
+        self.assistantChanged.emit()
+
+    def _key_saved(self) -> bool:
+        if self._assist_key_saved is None:
+            self._assist_key_saved = bool(secrets_store.get_secret(assistant.SECRET_NAME))
+        return self._assist_key_saved
+
+    assistantKeySaved = Property(bool, _key_saved, notify=assistantChanged)  # noqa: N815
+
+    @Slot(str)
+    @safe_slot
+    def setAssistantKey(self, key: str) -> None:  # noqa: N802
+        """Ключ API — в хранилище паролей системы; пустой удаляет."""
+        try:
+            secrets_store.set_secret(assistant.SECRET_NAME, key.strip())
+        except secrets_store.SecretError as exc:
+            self.toast.emit(str(exc), "error")
+            return
+        self._assist_key_saved = bool(key.strip())
+        self.assistantChanged.emit()
+        self.toast.emit("Ключ сохранён в хранилище паролей системы" if key.strip() else "Ключ удалён", "success")
+
+    @Slot()
+    @safe_slot
+    def checkAssistantApi(self) -> None:  # noqa: N802
+        """«Проверить подключение»: короткий запрос к провайдеру из настроек."""
+
+        def work() -> None:
+            try:
+                endpoint = self.controller.assistant_endpoint()
+                reply = assistant.stream_chat(endpoint, [{"role": "user", "content": "Ответь одним словом: работает?"}],
+                                              lambda _t: None, max_tokens=8)
+                self._assistant_in.emit("check", f"Подключение работает: {reply[:40] or 'ответ получен'}")
+            except assistant.AssistantError as exc:
+                self._assistant_in.emit("check-error", str(exc))
+
+        threading.Thread(target=work, name="assistant-check", daemon=True).start()
 
     # ---------- возможности и «что нового» ----------
 
@@ -1474,6 +1583,9 @@ class _Relay(Listener):
 
     def on_dictation(self, phase: str) -> None:
         self._b._dictation_in.emit(phase)
+
+    def on_assistant(self, kind: str, text: str) -> None:
+        self._b._assistant_in.emit(kind, text)
 
     def on_dictation_text(self, text: str) -> None:
         self._b._dictation_text_in.emit(text)

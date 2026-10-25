@@ -77,3 +77,118 @@ def test_assistant_answers_questions_from_the_other_side_only(sse_server):
 def test_profile_and_context_reach_the_model():
     messages = assistant.build_messages("Когда релиз?", ["Собеседник 1: Привет"], "Я тимлид")
     assert "Я тимлид" in messages[1]["content"] and "Собеседник 1: Привет" in messages[1]["content"]
+
+
+# ---------- подключение к записи и настройкам ----------
+
+
+class Listener:
+    def __init__(self):
+        self.texts, self.assistant = [], []
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+    def on_text(self, event):
+        self.texts.append(event)
+
+    def on_assistant(self, kind, text):
+        self.assistant.append((kind, text))
+
+
+class NoHotkeys:
+    def set_chord(self, chord): ...
+
+
+@pytest.fixture
+def controller(tmp_path, monkeypatch):
+    from govorilka import controller as controller_module
+    from govorilka.config import Settings
+
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    listener = Listener()
+    c = controller_module.Controller(listener, Settings(transcripts_dir=str(tmp_path)), hotkeys=NoHotkeys())
+    return c, listener, controller_module
+
+
+def test_finished_phrases_reach_the_assistant_with_who_said_them(controller):
+    from govorilka.pipeline import TextEvent
+
+    c, listener, _ = controller
+    fed = []
+
+    class Helper:
+        def feed(self, speaker, text, from_other):
+            fed.append((speaker, text, from_other))
+
+    c._assistant = Helper()
+    c._on_session_text(TextEvent("system", "Собеседник 1", "partial", "Когда рел", 0, 1))  # черновик не нужен
+    c._on_session_text(TextEvent("system", "Собеседник 1", "final", "Когда релиз?", 0, 1))
+    c._on_session_text(TextEvent("mic", "Я", "final", "В пятницу.", 1, 2))
+    assert fed == [("Собеседник 1", "Когда релиз?", True), ("Я", "В пятницу.", False)]
+    assert len(listener.texts) == 3  # лента получает всё, как раньше
+
+
+def test_api_endpoint_needs_a_key_and_an_address(controller, monkeypatch):
+    from dataclasses import replace
+
+    c, _, module = controller
+    monkeypatch.setattr(module.secrets_store, "get_secret", lambda name: "")
+    with pytest.raises(assistant.AssistantError, match="ключ"):
+        c.assistant_endpoint()
+    monkeypatch.setattr(module.secrets_store, "get_secret", lambda name: "sk-test")
+    endpoint = c.assistant_endpoint()
+    assert endpoint.base_url == "https://api.openai.com/v1" and endpoint.model == "gpt-4o-mini" and endpoint.api_key == "sk-test"
+    c.settings = replace(c.settings, assistant_api_preset="custom", assistant_api_url="")
+    with pytest.raises(assistant.AssistantError, match="адрес"):
+        c.assistant_endpoint()
+    c.settings = replace(c.settings, assistant_api_url="https://llm.example/v1", assistant_api_model="my-model")
+    assert c.assistant_endpoint() == assistant.ChatEndpoint("https://llm.example/v1", "my-model", "sk-test")
+
+
+def test_switching_hints_on_during_a_call_starts_them_and_off_stops_them(controller, monkeypatch):
+    from dataclasses import replace
+
+    c, listener, module = controller
+    started, stopped = [], []
+    monkeypatch.setattr(c, "_start_assistant", lambda: started.append(1))
+
+    class Helper:
+        def stop(self):
+            stopped.append(1)
+
+    c.session = object()
+    c.state = module.AppState.RECORDING
+    c.update_settings(replace(c.settings, assistant_enabled=True))
+    assert started == [1]
+    c._assistant = Helper()
+    c.update_settings(replace(c.settings, assistant_enabled=False))
+    assert stopped == [1] and ("off", "") in listener.assistant and started == [1]
+
+
+def test_stopping_the_recording_stops_the_hints(controller):
+    c, listener, module = controller
+    stopped = []
+
+    class Helper:
+        def stop(self):
+            stopped.append(1)
+
+    class Session:
+        def stop(self):
+            return None
+
+        transcript = None
+
+    c._assistant = Helper()
+    c.session = Session()
+    c.state = module.AppState.RECORDING
+    c._after_recording = lambda session: None
+    c.stop_recording()
+    assert stopped == [1] and ("off", "") in listener.assistant
+
+
+def test_capture_guard_reports_failure_instead_of_crashing():
+    from govorilka.qt import capture_guard
+
+    assert capture_guard.protect(0) == ""  # нет такого окна: «не получилось», без исключения

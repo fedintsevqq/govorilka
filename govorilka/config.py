@@ -117,6 +117,15 @@ class Settings:
     dictation_enabled: bool = True  # диктовка в любое поле: зажал комбинацию, сказал, отпустил — текст у курсора
     dictation_hotkey: str = DEFAULT_DICTATION_HOTKEY
     summary_model: str = "qwen3-4b"  # локальная модель итогов: см. govorilka/summary.py
+    # подсказки в звонке (govorilka/assistant.py): отдельная функция, выключена по умолчанию
+    assistant_enabled: bool = False
+    assistant_source: str = "local"  # local — модель на компьютере, api — провайдер по ключу (ключ — в хранилище паролей)
+    assistant_api_preset: str = "openai"
+    assistant_api_url: str = ""  # для «Своего адреса»
+    assistant_api_model: str = ""  # пусто — модель провайдера по умолчанию
+    assistant_profile: str = ""  # что нейросети знать о вас и теме
+    assistant_auto: bool = True  # отвечать сразу, как прозвучал вопрос (иначе — только по кнопке «Ответить»)
+    assistant_hide: bool = True  # окно подсказок не видно при демонстрации экрана
     autostart_initialized: bool = False  # при первой установке автозапуск включается один раз; дальше решает человек
     last_seen_version: str = ""  # версия, на которой показывали «Что нового»
     signing_id: str = ""  # Mac: чем подписана программа; сменилась подпись — разрешения macOS надо дать заново

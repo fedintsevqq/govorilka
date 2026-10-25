@@ -316,6 +316,10 @@ class LlamaServer:
             creationflags=flags, cwd=str(engine.parent),
         )
 
+    @property
+    def url(self) -> str:
+        return self._url
+
     def wait_ready(self, timeout: float = START_TIMEOUT_S, cancelled: Callable[[], bool] = lambda: False) -> None:
         end = time.monotonic() + timeout
         while time.monotonic() < end:

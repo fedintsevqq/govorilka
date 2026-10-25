@@ -1158,3 +1158,31 @@ def bodies_all(window):
             yield from walk(child)
 
     return list(walk(window.contentItem()))
+
+
+# ---------- подсказки в звонке ----------
+
+
+def test_assistant_states_reach_the_window(backend):
+    backend._on_assistant("status", "Загружаю Qwen3 4B…")
+    assert backend.assistantPhase == "loading" and "Qwen3" in backend.assistantNote
+    backend._on_assistant("question", "Когда релиз?")
+    assert backend.assistantPhase == "thinking" and backend.assistantQuestion == "Когда релиз?" and backend.assistantAnswer == ""
+    backend._on_assistant("answer", "В пятницу")
+    backend._on_assistant("done", "В пятницу, если закроем баги.")
+    assert backend.assistantPhase == "ready" and backend.assistantAnswer.startswith("В пятницу, если")
+    backend.setAssistantHidden(True)
+    backend._on_assistant("off", "")
+    assert backend.assistantPhase == "" and not backend.assistantHidden and backend.assistantAnswer == ""
+
+
+def test_api_key_goes_to_the_system_keychain_not_to_settings(backend, monkeypatch):
+    from govorilka import secrets_store
+
+    stored = {}
+    monkeypatch.setattr(secrets_store, "set_secret", lambda name, value: stored.__setitem__(name, value))
+    backend.setAssistantKey("  sk-test  ")
+    assert stored == {"assistant-api-key": "sk-test"} and backend.assistantKeySaved
+    assert "sk-test" not in str(backend.settings)
+    backend.setAssistantKey("")
+    assert not backend.assistantKeySaved

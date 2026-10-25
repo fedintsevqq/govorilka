@@ -56,6 +56,11 @@ Window {
         dictationLabel = draft.dictationLabel
         dictationWarning = ""
         promptField.text = draft.claude_prompt
+        profileField.text = draft.assistant_profile || ""
+        apiUrlField.text = draft.assistant_api_url || ""
+        apiModelField.text = draft.assistant_api_model || ""
+        apiKeyField.text = ""
+        apiBox.currentIndex = Math.max(0, backend.apiPresets.findIndex(p => p.id === draft.assistant_api_preset))
         folderField.text = draft.transcripts_dir
         claudeField.text = draft.claude_workdir
         customKey = backend.isCustomModel(draft.model) ? draft.model : ""
@@ -188,6 +193,7 @@ Window {
         open()
         if (section === "summary") Qt.callLater(() => { scroll.contentItem.contentY = Math.max(0, summarySection.y - 12) })
     }
+    function showAssistant() { scroll.contentItem.contentY = Math.max(0, assistantSection.y - 12) }   // для снимков
     function showUpdates() { scroll.contentItem.contentY = Math.max(0, updatesSection.y - 12) }   // для снимков интерфейса
 
     ScrollView {
@@ -524,6 +530,136 @@ Window {
             }
 
             Section {
+                id: assistantSection
+                heading: "Подсказки в звонке"
+                readonly property var preset: backend.apiPresets[apiBox.currentIndex] || backend.apiPresets[0]
+                readonly property bool api: win.draft.assistant_source === "api"
+                ToggleRow {
+                    title: "Подсказывать ответы на вопросы собеседника"
+                    hint: "Во время записи нейросеть слышит вопросы собеседника и сразу предлагает ответ в отдельном окне поверх всех. Включить и выключить можно и кнопкой «Подсказки» в пульте записи."
+                    checked: win.draft.assistant_enabled === true
+                    onToggled: (v) => win.setValue("assistant_enabled", v)
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    opacity: win.draft.assistant_enabled ? 1 : 0.5
+                    Label { text: "Кто отвечает" }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 7
+                        ChipToggle { text: "Модель на компьютере"; iconName: "power"; checked: !assistantSection.api; onClicked: win.setValue("assistant_source", "local"); tip: "Разговор не покидает компьютер. Нужна память и время на ответ" }
+                        ChipToggle { text: "Через API"; iconName: "open"; checked: assistantSection.api; onClicked: win.setValue("assistant_source", "api"); tip: "OpenAI, DeepSeek, OpenRouter, Claude или свой адрес по вашему ключу: быстрее и умнее" }
+                    }
+                    Text {
+                        visible: !assistantSection.api
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "Отвечает " + backend.summaryModel.title + " — та же модель, что пишет итоги (выбирается в разделе «Итоги»). Она работает вместе с распознаванием, поэтому памяти нужно примерно на 1,5 ГБ больше. Ответ — через 3–10 секунд, на слабом компьютере дольше."
+                        font.pixelSize: 12
+                        lineHeight: 1.2
+                        color: Theme.textTertiary
+                    }
+                    ColumnLayout {
+                        visible: assistantSection.api
+                        Layout.fillWidth: true
+                        spacing: 8
+                        ComboField {
+                            id: apiBox
+                            model: backend.apiPresets
+                            textRole: "label"
+                            onActivated: win.setValue("assistant_api_preset", backend.apiPresets[currentIndex].id)
+                        }
+                        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: assistantSection.preset.hint; font.pixelSize: 12; color: Theme.textTertiary }
+                        FieldBox { id: apiUrlField; visible: assistantSection.preset.id === "custom"; placeholder: "https://адрес-сервиса/v1" }
+                        FieldBox { id: apiModelField; placeholder: "Модель: " + (assistantSection.preset.model || "название модели") + " (пусто — по умолчанию)" }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 42
+                                radius: 14
+                                color: Theme.core
+                                border.color: apiKeyField.activeFocus ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.6) : Theme.shellLine
+                                TextField {
+                                    id: apiKeyField
+                                    anchors.fill: parent
+                                    leftPadding: 14
+                                    echoMode: TextInput.Password
+                                    color: Theme.text
+                                    placeholderText: backend.assistantKeySaved ? "Ключ сохранён. Введите новый, чтобы заменить" : "Ключ API"
+                                    placeholderTextColor: Theme.textTertiary
+                                    font.pixelSize: 14
+                                    background: Item {}
+                                }
+                            }
+                            PillButton {
+                                text: "Сохранить ключ"
+                                enabled: apiKeyField.text.trim() !== ""
+                                tip: "Ключ хранится в «Диспетчере учётных данных» Windows или «Связке ключей» Mac, не в файле настроек"
+                                onClicked: { backend.setAssistantKey(apiKeyField.text); apiKeyField.text = "" }
+                            }
+                        }
+                        RowLayout {
+                            spacing: 8
+                            PillButton {
+                                text: "Проверить подключение"
+                                enabled: backend.assistantKeySaved
+                                tip: "Сохраните настройки, потом проверьте: короткий запрос к провайдеру"
+                                onClicked: backend.checkAssistantApi()
+                            }
+                            PillButton { visible: backend.assistantKeySaved; text: "Удалить ключ"; onClicked: backend.setAssistantKey("") }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: "Вопрос собеседника и последние реплики разговора уходят провайдеру. Сам звук и файл транскрипта не уходят."
+                            font.pixelSize: 12
+                            color: Theme.pause
+                        }
+                    }
+                    Label { text: "Что нейросети знать о вас и теме" }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 100
+                        radius: 14
+                        color: Theme.core
+                        border.color: profileField.activeFocus ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.6) : Theme.shellLine
+                        ScrollView {
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            TextArea {
+                                id: profileField
+                                wrapMode: TextEdit.Wrap
+                                font.pixelSize: 13
+                                color: Theme.text
+                                selectByMouse: true
+                                placeholderText: "Например: тимлид тестирования в банке, 6 лет опыта"
+                                placeholderTextColor: Theme.textTertiary
+                                leftPadding: 10; rightPadding: 10; topPadding: 8
+                                background: Item {}
+                            }
+                        }
+                    }
+                    ToggleRow {
+                        title: "Отвечать сразу на вопросы"
+                        hint: "Выключите, чтобы подсказка появлялась только по кнопке «Ответить» в окне подсказок"
+                        checked: win.draft.assistant_auto === true
+                        onToggled: (v) => win.setValue("assistant_auto", v)
+                    }
+                    ToggleRow {
+                        title: "Не показывать окно при демонстрации экрана"
+                        hint: Qt.platform.os === "osx"
+                              ? "На мониторе окно видно вам, а в трансляции его нет. Начиная с macOS 15 часть программ для звонков всё же может его показать: проверьте на своей, начав демонстрацию."
+                              : "На мониторе окно видно вам, а в Zoom, Teams, Телемосте и записи экрана его нет (Windows 10 версии 2004 и новее). Фото экрана телефоном это не остановит."
+                        checked: win.draft.assistant_hide === true
+                        onToggled: (v) => win.setValue("assistant_hide", v)
+                    }
+                }
+            }
+
+            Section {
                 id: summarySection
                 heading: "Итоги"
                 Text {
@@ -698,6 +834,9 @@ Window {
                     win.draft.transcripts_dir = folderField.text
                     win.draft.claude_workdir = claudeField.text
                     win.draft.claude_prompt = promptField.text
+                    win.draft.assistant_profile = profileField.text
+                    win.draft.assistant_api_url = apiUrlField.text
+                    win.draft.assistant_api_model = apiModelField.text
                     // только изменённое: тумблеры главного окна и знакомство могли поменять настройки,
                     // пока это окно было открыто, и старая копия не должна их откатить
                     const changed = {}
@@ -712,7 +851,7 @@ Window {
     // Esc в открытом списке закрывает только список, а не всё окно
     Shortcut {
         sequences: ["Escape"]
-        enabled: !actionBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible && !customType.popup.visible
+        enabled: !actionBox.popup.visible && !apiBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible && !customType.popup.visible
         onActivated: win.close()
     }
 }

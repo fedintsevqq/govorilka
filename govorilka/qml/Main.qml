@@ -305,6 +305,13 @@ ApplicationWindow {
                     ChipToggle { text: "Звук компьютера"; iconName: "speaker"; checked: window.opts.capture_system; onToggled: backend.setOption("capture_system", checked); tip: "Записывать звук компьютера — голоса собеседников из Zoom, Телемоста, Teams" }
                     ChipToggle { text: "Без эха"; iconName: "echo"; checked: window.opts.echo_filter; onToggled: backend.setOption("echo_filter", checked); tip: "Убирать из микрофона звук колонок, чтобы собеседники не попадали в «Я». В наушниках можно выключить" }
                     ChipToggle { text: "Голоса"; iconName: "people"; checked: window.opts.split_speakers; onToggled: backend.setOption("split_speakers", checked); tip: "Различать собеседников по голосу: «Собеседник 1», «Собеседник 2»…" }
+                    ChipToggle {
+                        text: "Подсказки"
+                        iconName: "sparkle"
+                        checked: window.opts.assistant_enabled === true
+                        onToggled: { backend.setOption("assistant_enabled", checked); if (checked) backend.setAssistantHidden(false) }
+                        tip: "Подсказки в звонке: нейросеть отвечает на вопросы собеседника в отдельном окне, которого не видно при демонстрации экрана"
+                    }
                 }
 
                 Item { Layout.fillHeight: true }
@@ -591,6 +598,7 @@ ApplicationWindow {
     RadialMenu { id: radial; practice: tour.opened }
     RecordingPill { mainHidden: !window.visible || window.visibility === Window.Minimized || !window.active }
     DictationPill {}
+    AssistantPanel { live: window.live }
 
     Connections {
         target: backend

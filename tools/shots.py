@@ -183,6 +183,29 @@ def main(out: Path) -> None:
         steps.append(lambda phase=phase, level=level, note=note: dictation(phase, level, note))
         steps.append(lambda name=name: shoot(backend, pill(), out / f"{name}.png"))
     steps.append(lambda: dictation("", 0.0, ""))
+    def assist(phase: str) -> None:
+        from dataclasses import replace as _replace
+
+        backend.controller.settings = _replace(backend.controller.settings, assistant_enabled=True, assistant_source="api")
+        backend.settingsChanged.emit()
+        backend._on_assistant("ready", "")
+        if phase in ("thinking", "answer"):
+            backend._on_assistant("question", "А как вы будете проверять оплату с 3-D Secure до пятницы?")
+        if phase == "answer":
+            backend._on_assistant("done", "Прогоню сценарий на стенде с тестовыми картами: успешная оплата, отказ банка и таймаут. "
+                                          "Баги заведу с логами сегодня, к пятнице будет понятно, закрываем ли до релиза.")
+        backend._assist_protection = "hidden"
+        backend.assistantChanged.emit()
+
+    panel = lambda: next(w for w in app.topLevelWindows() if w.objectName() == "assistantPanel")  # noqa: E731
+    for phase in ("thinking", "answer"):
+        steps.append(lambda phase=phase: assist(phase))
+        steps.append(lambda phase=phase: shoot(backend, panel(), out / f"12-assistant-{phase}.png"))
+    steps.append(lambda: invoke("settings", "open"))
+    steps.append(lambda: invoke("settings", "showAssistant"))
+    steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings-assistant.png"))
+    steps.append(lambda: root.findChild(QObject, "settings").close())
+    steps.append(lambda: backend._on_assistant("off", ""))
     steps.append(lambda: offer_update(False))
     steps.append(lambda: shoot(backend, root, out / "6-update.png"))
     steps.append(lambda: offer_update(True))

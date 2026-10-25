@@ -23,10 +23,10 @@ from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
 from urllib.parse import quote
 
-from govorilka import ai, desktop_apps, features, models, summary, updates, version
+from govorilka import ai, assistant, desktop_apps, features, models, secrets_store, summary, updates, version
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.dictation import Dictation
-from govorilka.config import FROZEN, DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
+from govorilka.config import FROZEN, DATA_DIR, SOURCE_SYSTEM, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
 from govorilka.filejob import CANCELLED, FileJob
 from govorilka.hotkeys import (
@@ -79,6 +79,7 @@ class Listener:
     def on_models_unloaded(self) -> None: ...  # сборку мусора надо делать в главном потоке: из фонового она трогает объекты Qt
     def on_dictation(self, phase: str) -> None: ...  # "loading" / "listening" / "recognizing" / "" — диктовка закончилась
     def on_dictation_text(self, text: str) -> None: ...  # распознанный текст: окно вставит его у курсора
+    def on_assistant(self, kind: str, text: str) -> None: ...  # подсказки: ready / question / answer / done / error / status / off
 
 
 @dataclass
@@ -124,6 +125,7 @@ class Controller:
         self._probe_country = ai.probe_country  # подменяются в тестах: настоящие проверки ходят в сеть
         self._reachable = ai.reachable
         self._dictation_run: _DictationRun | None = None
+        self._assistant: assistant.CallAssistant | None = None
         self._dictation_lock = threading.Lock()
         self.hotkeys = hotkeys or HotkeyWatcher(
             on_trigger=listener.on_hotkey,
@@ -270,6 +272,7 @@ class Controller:
     def shutdown(self) -> None:
         """Выход: дописать запись и расшифровку, остановить опрос клавиш."""
         self._closing = True
+        self._stop_assistant()
         if self._update_timer is not None:
             self._update_timer.cancel()
         self.hotkeys.stop()
@@ -359,7 +362,7 @@ class Controller:
                 self.settings,
                 engines,
                 title,
-                on_text=self.listener.on_text,
+                on_text=self._on_session_text,
                 on_level=self.listener.on_level,
                 on_notice=self.listener.on_status,
             )
@@ -383,12 +386,15 @@ class Controller:
         self.listener.on_transcript(session.transcript, session.path)
         self._set_state(AppState.RECORDING)
         self.listener.on_status(f"Идёт запись. Автосохранение: {session.path}")
+        if self.settings.assistant_enabled:
+            self._start_assistant()
 
     def stop_recording(self) -> None:
         session = self.session
         if session is None or self.state not in (AppState.RECORDING, AppState.PAUSED):
             return
         self.session = None
+        self._stop_assistant()
         self._set_state(AppState.STOPPING)
         self.listener.on_status("Останавливаю, дописываю последние фразы…")
 
@@ -411,6 +417,65 @@ class Controller:
 
         self._stopping = threading.Thread(target=finish, name="stop-recording", daemon=True)
         self._stopping.start()
+
+    # ---------- подсказки в звонке ----------
+
+    def _on_session_text(self, event: TextEvent) -> None:
+        self.listener.on_text(event)
+        helper = self._assistant
+        if helper is not None and event.kind == "final":
+            helper.feed(event.speaker, event.text, from_other=event.source == SOURCE_SYSTEM)
+
+    def _start_assistant(self) -> None:
+        settings = self.settings
+        server_box: list[summary.LlamaServer] = []
+
+        def connect() -> assistant.ChatEndpoint:
+            if settings.assistant_source == "api":
+                return self.assistant_endpoint()
+            model = self.summary_model()
+            verdict, note = summary.fit(model, summary.total_ram_gb() - 1.5)  # вместе с моделью распознавания
+            if verdict == "no":
+                raise assistant.AssistantError(note + ". Выберите модель полегче в настройках или подключите API")
+            engine = summary.ensure_engine(lambda text: self.listener.on_assistant("status", text))
+            weights = summary.ensure_model(model, lambda text: self.listener.on_assistant("status", text))
+            self.listener.on_assistant("status", f"Загружаю {model.title}…")
+            server = summary.LlamaServer(engine, weights)
+            server_box.append(server)
+            server.wait_ready()
+            return assistant.ChatEndpoint(server.url + "/v1", "")
+
+        def stop_server() -> None:
+            for server in server_box:
+                server.stop()
+
+        helper = assistant.CallAssistant(connect, settings.assistant_profile, self.listener.on_assistant,
+                                         auto=settings.assistant_auto, stop_server=stop_server)
+        self._assistant = helper
+        helper.start()
+
+    def _stop_assistant(self) -> None:
+        helper, self._assistant = self._assistant, None
+        if helper is not None:
+            helper.stop()
+            self.listener.on_assistant("off", "")
+
+    def assistant_endpoint(self) -> assistant.ChatEndpoint:
+        """Адрес, модель и ключ провайдера из настроек. AssistantError — чего-то не хватает."""
+        s = self.settings
+        preset = assistant.PRESETS_BY_KEY.get(s.assistant_api_preset, assistant.API_PRESETS[0])
+        url = (s.assistant_api_url if preset.key == "custom" else preset.base_url).strip()
+        model = s.assistant_api_model.strip() or preset.model
+        key = secrets_store.get_secret(assistant.SECRET_NAME)
+        if not url:
+            raise assistant.AssistantError("Укажите адрес API в настройках, раздел «Подсказки в звонке»")
+        if not key:
+            raise assistant.AssistantError("Введите ключ API в настройках, раздел «Подсказки в звонке»")
+        return assistant.ChatEndpoint(url, model, key)
+
+    def assistant_answer_last(self) -> bool:
+        helper = self._assistant
+        return helper is not None and helper.answer_last()
 
     def _after_recording(self, session: Session) -> None:
         self._refine(session.transcript, session.diarizers(), {"system": SPEAKER_OTHERS}, session.saver.save)
@@ -757,7 +822,16 @@ class Controller:
 
     def update_settings(self, settings: Settings, autostart_on: bool | None = None) -> list[str]:
         """Сохраняет настройки и применяет сразу. Возвращает ошибки, о которых надо сказать."""
+        before = self.settings
         self.settings = settings
+        if self.session is not None and self.state in (AppState.RECORDING, AppState.PAUSED):
+            assistant_changed = any(getattr(before, f) != getattr(settings, f) for f in (
+                "assistant_enabled", "assistant_source", "assistant_api_preset", "assistant_api_url",
+                "assistant_api_model", "assistant_profile", "assistant_auto"))
+            if assistant_changed:  # включили, выключили или поменяли подсказки посреди звонка — перезапускаем
+                self._stop_assistant()
+                if settings.assistant_enabled:
+                    self._start_assistant()
         save_settings(settings)
         self.apply_hotkey()
         problems = []
