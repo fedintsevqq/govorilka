@@ -291,16 +291,17 @@ class Backend(QObject):
         self.controller: Controller = self._controller_factory(self._listener)
 
         self._refresh_timer = _single_shot(self, REFRESH_MS, self._refresh)
-        self._level_timer = QTimer(self, interval=LEVEL_TICK_MS, timeout=self._tick_levels)
+        # таймеры подключаем через timeout.connect, а не аргументом конструктора: так PySide точно держит слот
+        self._level_timer = _repeating(self, LEVEL_TICK_MS, self._tick_levels)
         self._level_timer.start()
-        self._elapsed_timer = QTimer(self, interval=ELAPSED_TICK_MS, timeout=self._tick_elapsed)
-        self._capture_timer = QTimer(self, interval=CAPTURE_TICK_MS, timeout=self._tick_capture)
+        self._elapsed_timer = _repeating(self, ELAPSED_TICK_MS, self._tick_elapsed)
+        self._capture_timer = _repeating(self, CAPTURE_TICK_MS, self._tick_capture)
 
     def start(self) -> None:
         self.controller.start()
         if getattr(self.controller.hotkeys, "needs_ticks", False):
             # Mac: горячую клавишу опрашиваем из главного потока — из фонового macOS прерывает программу
-            self._hotkey_timer = QTimer(self, interval=HOTKEY_TICK_MS, timeout=self.controller.hotkeys.tick)
+            self._hotkey_timer = _repeating(self, HOTKEY_TICK_MS, self._tick_hotkeys)
             self._hotkey_timer.start()
         self._startup_notices = self.controller.startup_notices()
         if self.controller.check_signing_change():
@@ -1428,7 +1429,12 @@ class Backend(QObject):
             self._keyboard = system_keyboard()
         return self._keyboard
 
+    def _tick_hotkeys(self) -> None:
+        self.controller.hotkeys.tick()
+
     def _tick_capture(self) -> None:
+        if "nocapture" in os.environ.get("GOVORILKA_LIVE_FLAGS", ""):  # поиск сбоя в CI: без опроса клавиш в настройках
+            return
         try:
             snap = self._get_keyboard().snapshot()
         except Exception as exc:  # noqa: BLE001
@@ -1626,6 +1632,13 @@ class _Relay(Listener):
 
     def on_finished(self, path: Path | None, message: str) -> None:
         self._b._finished_in.emit(path, message)
+
+
+def _repeating(parent: QObject, interval: int, slot) -> QTimer:  # noqa: ANN001
+    timer = QTimer(parent)
+    timer.setInterval(interval)
+    timer.timeout.connect(slot)
+    return timer
 
 
 def _single_shot(parent: QObject, interval: int, slot) -> QTimer:  # noqa: ANN001
