@@ -61,7 +61,7 @@ def server(tmp_path, monkeypatch):
 
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    monkeypatch.setattr(installer, "_check_url", lambda url: None)
+    monkeypatch.setattr(installer, "_check_url", lambda url, allowed=None: None)
     yield f"http://127.0.0.1:{httpd.server_port}/f.exe", served
     httpd.shutdown()
 

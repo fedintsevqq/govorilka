@@ -44,6 +44,22 @@ DIALOG = [
 ]
 
 
+SUMMARY = """### Кратко
+Планёрка по релизу: распределили регрессионное тестирование, обсудили баги оплаты картой.
+
+### Решения
+- Регресс начинаем в пятницу.
+
+### Задачи
+- **Я** — смоук-тесты, отписаться в чат до обеда.
+- **Я** — завести карточки по багам оплаты и приложить логи до пятницы.
+- **Собеседник 2** — перепроверить 3-D Secure на стенде.
+
+### Открытые вопросы
+- Кто берёт регресс по входу через телефон?
+"""
+
+
 def shoot(backend: Backend, window, path: Path) -> None:
     image = window.grabWindow()
     image.save(str(path))
@@ -152,6 +168,18 @@ def main(out: Path) -> None:
     steps.append(lambda: offer_update(True))
     steps.append(lambda: shoot(backend, root, out / "7-update-installing.png"))
     steps.append(lambda: (setattr(backend, "_installing", False), backend.updateChanged.emit()))
+    def summary_state(state: str) -> None:
+        root.setProperty("panel", "summary" if state else "feed")
+        backend._transcript.summary = SUMMARY if state == "done" else ""
+        backend._summary_busy = state == "busy"
+        backend._summary_status = "Читаю разговор: часть 2 из 3…" if state == "busy" else ""
+        backend.summaryChanged.emit()
+        backend.summaryProgress.emit()
+
+    for state in ("empty", "busy", "done"):
+        steps.append(lambda state=state: summary_state(state))
+        steps.append(lambda state=state: shoot(backend, root, out / f"9-summary-{state}.png"))
+    steps.append(lambda: summary_state(""))
     steps.append(select_and_menu)
     steps.append(lambda: shoot(backend, root, out / "5-selection.png"))
     steps.append(lambda: invoke("feed", "clearSelection"))

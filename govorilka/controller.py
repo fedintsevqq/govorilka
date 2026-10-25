@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 import subprocess
 import sys
 import threading
@@ -22,7 +23,7 @@ from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
 from urllib.parse import quote
 
-from govorilka import ai, desktop_apps, models, updates, version
+from govorilka import ai, desktop_apps, models, summary, updates, version
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.dictation import Dictation
 from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
@@ -549,6 +550,38 @@ class Controller:
 
     def plain_text(self) -> str:
         return self.transcript.to_plain_text() if self.transcript else ""
+
+    # ---------- итоги на локальной модели ----------
+
+    def summary_model(self) -> summary.LlmModel:
+        return summary.CATALOG_BY_KEY.get(self.settings.summary_model) or summary.CATALOG_BY_KEY[summary.DEFAULT_LLM]
+
+    def make_summary(self, on_status: Callable[[str], None], cancelled: Callable[[], bool] = lambda: False) -> str:
+        """Итоги текущего разговора (вызывается из фонового потока). SummaryError — с понятным текстом."""
+        transcript = self.transcript
+        if transcript is None or not transcript.utterances:
+            raise summary.SummaryError("Пока не о чем подводить итоги: запишите созвон или расшифруйте файл")
+        if self.state != AppState.IDLE or self.busy:
+            raise summary.SummaryError("Дождитесь конца записи или расшифровки: итогам нужен весь разговор")
+        model = self.summary_model()
+        verdict, note = summary.fit(model, summary.total_ram_gb())
+        if verdict == "no":
+            raise summary.SummaryError(note + ". Выберите модель полегче в настройках, раздел «Итоги»")
+        engine = summary.ensure_engine(on_status, cancelled)
+        weights = summary.ensure_model(model, on_status, cancelled)
+        self.unload_models()  # модели распознавания сейчас не нужны: отдаём их гигабайт модели итогов
+        on_status(f"Загружаю {model.title}…")
+        server = summary.LlamaServer(engine, weights)
+        try:
+            server.wait_ready(cancelled=cancelled)
+            text = summary.summarize(server, transcript.to_plain_text(), on_status, cancelled)
+        finally:
+            server.stop()
+        if not text:
+            raise summary.SummaryError("Модель вернула пустой ответ. Попробуйте ещё раз или выберите другую модель")
+        transcript.summary = text
+        self.save_now()
+        return text
 
     def open_folder(self) -> None:
         folder = self.settings.transcripts_path

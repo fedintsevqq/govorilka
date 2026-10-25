@@ -63,6 +63,8 @@ ApplicationWindow {
         }
     }
 
+    property string panel: "feed"   // правая панель: «Разговор» или «Итоги»
+
     Backdrop { anchors.fill: parent }
 
     // ---------- шапка-остров ----------
@@ -443,12 +445,10 @@ ApplicationWindow {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 1
-                        Text {
-                            text: "Транскрипт"
-                            font.pixelSize: Theme.fontTitle + 1
-                            font.weight: Font.DemiBold
-                            font.letterSpacing: -0.2
-                            color: Theme.text
+                        Row {   // вкладки: сам разговор и его итоги
+                            spacing: 6
+                            ChipToggle { text: "Разговор"; iconName: "people"; checked: window.panel === "feed"; onClicked: window.panel = "feed"; tip: "Реплики созвона" }
+                            ChipToggle { text: "Итоги"; iconName: "sparkle"; checked: window.panel === "summary"; onClicked: window.panel = "summary"; tip: "Кратко, решения, задачи и открытые вопросы: считает модель на этом компьютере" }
                         }
                         Text {
                             Layout.fillWidth: true
@@ -511,8 +511,15 @@ ApplicationWindow {
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.hairline }
 
+                SummaryView {
+                    visible: window.panel === "summary"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    onOpenSettings: settingsWindow.openAt("summary")
+                }
                 TranscriptView {
                     objectName: "feed"
+                    visible: window.panel === "feed"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     model: backend.transcript

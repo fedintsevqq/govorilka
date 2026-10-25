@@ -8,14 +8,20 @@ AbstractButton {
     id: card
     property var info: ({})
     property bool selected: false
-    readonly property bool downloading: backend.modelDownloading === info.key
+    property bool downloading: false
+    property real fraction: 0
+    property bool busy: false   // качается другая модель: вторую параллельно не начинаем
+    readonly property bool blocked: info.fit === "no"   // компьютеру не по силам
     signal choose()
+    signal download()
+    signal remove()
     Layout.fillWidth: true
     implicitHeight: body.implicitHeight + 24
     hoverEnabled: true
     focusPolicy: Qt.TabFocus
     Accessible.name: info.title + (selected ? ", выбрана" : "")
-    onClicked: card.choose()
+    onClicked: if (!card.blocked) card.choose()
+    opacity: blocked ? 0.6 : 1
 
     background: Rectangle {
         radius: 14
@@ -74,7 +80,8 @@ AbstractButton {
                     Text { text: card.info.title; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.text; height: 20; verticalAlignment: Text.AlignVCenter }
                     Badge { visible: card.info.recommended === true; text: "Рекомендуем"; tint: Theme.accent }
                     Badge { visible: card.info.punctuation === true; text: "С пунктуацией"; tint: Theme.success }
-                    Badge { visible: card.info.languages !== "русский"; text: card.info.languages; tint: Theme.me }
+                    Badge { visible: card.info.languages !== undefined && card.info.languages !== "русский"; text: card.info.languages || ""; tint: Theme.me }
+                    Badge { visible: card.info.license !== undefined; text: card.info.license || ""; tint: Theme.textSecondary }
                 }
                 Text {
                     Layout.fillWidth: true
@@ -83,7 +90,16 @@ AbstractButton {
                     font.pixelSize: 12
                     color: Theme.textSecondary
                 }
+                Text {   // хватит ли памяти этому компьютеру
+                    visible: (card.info.note || "") !== ""
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: card.info.note || ""
+                    font.pixelSize: 12
+                    color: card.blocked ? Theme.danger : Theme.pause
+                }
                 Row {
+                    visible: card.info.accuracy !== undefined
                     spacing: 14
                     Row {
                         spacing: 6
@@ -92,7 +108,7 @@ AbstractButton {
                     Row {
                         spacing: 6
                         Text { text: "Скорость"; font.pixelSize: 11; color: Theme.textTertiary; anchors.verticalCenter: parent.verticalCenter }
-                        Dots { value: card.info.speed; anchors.verticalCenter: parent.verticalCenter }
+                        Dots { value: card.info.speed || 0; anchors.verticalCenter: parent.verticalCenter }
                     }
                 }
             }
@@ -110,10 +126,10 @@ AbstractButton {
                 RowLayout {
                     Layout.alignment: Qt.AlignRight
                     spacing: 4
-                    LoadRing { visible: card.downloading; fraction: backend.modelDownloadFraction; size: 18 }
+                    LoadRing { visible: card.downloading; fraction: card.fraction; size: 18 }
                     Text {
                         visible: card.downloading
-                        text: Math.round(backend.modelDownloadFraction * 100) + "%"
+                        text: Math.round(card.fraction * 100) + "%"
                         font.pixelSize: 12
                         font.features: { "tnum": 1 }
                         color: Theme.textSecondary
@@ -122,9 +138,9 @@ AbstractButton {
                         visible: !card.downloading && card.info.downloaded !== true
                         text: "Скачать"
                         implicitHeight: 30
-                        enabled: backend.modelDownloading === ""
-                        tip: "Скачать заранее, чтобы первая запись не ждала"
-                        onClicked: backend.downloadModel(card.info.key)
+                        enabled: !card.busy && !card.blocked
+                        tip: "Скачать заранее, чтобы потом не ждать"
+                        onClicked: card.download()
                     }
                     Text {
                         visible: !card.downloading && card.info.downloaded === true
@@ -137,7 +153,7 @@ AbstractButton {
                         iconName: "trash"
                         size: 28
                         tip: "Удалить с диска и освободить место"
-                        onClicked: backend.deleteModel(card.info.key)
+                        onClicked: card.remove()
                     }
                 }
             }

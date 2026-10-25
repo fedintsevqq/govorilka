@@ -82,11 +82,11 @@ def can_install() -> bool:
     return sys.platform == "darwin" and not mac_location_problem(app_bundle())
 
 
-def _check_url(url: str) -> None:
+def _check_url(url: str, allowed: tuple[str, ...] = ALLOWED_HOSTS) -> None:
     parsed = urlparse(url)
     host = parsed.hostname or ""
-    if parsed.scheme != "https" or not any(host == h.lstrip(".") or host.endswith(h) for h in ALLOWED_HOSTS):
-        raise InstallError(f"Скачивание не с GitHub отклонено: {host or url}")
+    if parsed.scheme != "https" or not any(host == h.lstrip(".") or host.endswith(h) for h in allowed):
+        raise InstallError(f"Скачивание с этого адреса отклонено: {host or url}")
 
 
 def sha256_of(path: Path) -> str:
@@ -103,17 +103,19 @@ def download(
     expected_size: int,
     on_status: Callable[[str], None],
     cancelled: Callable[[], bool] = lambda: False,
+    label: str = "обновление",
+    allowed: tuple[str, ...] = ALLOWED_HOSTS,
 ) -> None:
     """Скачивает файл в target (сначала в target.part). Процент идёт в on_status в том виде, который понимает кольцо загрузки."""
-    _check_url(url)
+    _check_url(url, allowed)
     part = target.with_name(target.name + ".part")
     request = urllib.request.Request(url, headers={"User-Agent": "Govorilka-updater"})
     done, last_report = 0, 0.0
     try:
         with urllib.request.urlopen(request, timeout=READ_TIMEOUT_S, context=net.ssl_context()) as response:  # noqa: S310
-            _check_url(response.geturl())  # после перенаправлений мы всё ещё на GitHub
+            _check_url(response.geturl(), allowed)  # после перенаправлений мы всё ещё там, где разрешено
             total = int(response.headers.get("Content-Length") or expected_size or 0)
-            on_status(models.format_progress("обновление", 0, total or None))
+            on_status(models.format_progress(label, 0, total or None))
             with part.open("wb") as out:
                 while True:
                     if cancelled():
@@ -125,7 +127,7 @@ def download(
                     done += len(block)
                     if time.monotonic() - last_report >= 0.4:
                         last_report = time.monotonic()
-                        on_status(models.format_progress("обновление", done, total or None))
+                        on_status(models.format_progress(label, done, total or None))
         part.replace(target)
     except OSError as exc:
         part.unlink(missing_ok=True)

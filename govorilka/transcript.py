@@ -55,6 +55,7 @@ class Transcript:
         self.aliases: dict[str, str] = {}  # ярлык голоса -> имя, которое дал пользователь или узнала память голосов
         self.centroids: dict[str, np.ndarray] = {}  # ярлык голоса -> усреднённый отпечаток (для памяти голосов)
         self.user_named: set[str] = set()  # ярлыки, которым имя дал пользователь (а не угадала память голосов)
+        self.summary = ""  # итоги созвона (Markdown), если их составили
         self._lock = threading.Lock()
 
     def add(self, utterance: Utterance) -> None:
@@ -197,6 +198,8 @@ class Transcript:
             f"Дата: {self.started_at.strftime('%d.%m.%Y %H:%M')}",
             "",
         ]
+        if self.summary.strip():  # итоги наверху: ради них файл чаще всего и открывают
+            lines += ["## Итоги", "", self.summary.strip(), "", "## Разговор", ""]
         for u in self.utterances:
             lines.append(format_line(u, markdown=True))
             lines.append("")

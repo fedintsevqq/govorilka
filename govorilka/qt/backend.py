@@ -42,6 +42,7 @@ from govorilka.hotkeys import (
 from govorilka.pipeline import TextEvent
 from govorilka import ai, asr_models, installer, permissions, updates, version
 from govorilka import models as model_files  # имя models занято свойством со списком моделей
+from govorilka import summary
 from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
@@ -151,6 +152,13 @@ class Backend(QObject):
     _release_in = Signal()
     _dictation_in = Signal(str)
     _catalog_in = Signal(object)
+    _summary_status_in = Signal(str)
+    _summary_done_in = Signal(str, str)
+    _llm_progress_in = Signal(float)
+    _llm_done_in = Signal(str, str)
+    summaryChanged = Signal()  # noqa: N815
+    summaryProgress = Signal()  # noqa: N815
+    llmChanged = Signal()  # noqa: N815
     _model_progress_in = Signal(float)
     _model_done_in = Signal(str, str)
     catalogChanged = Signal()  # noqa: N815
@@ -202,6 +210,13 @@ class Backend(QObject):
         self._installing = False
         self._update: updates.UpdateInfo | None = None
         self._downloaded: dict[str, bool] = {}
+        self._summary_busy = False
+        self._summary_status = ""
+        self._summary_fraction = -1.0
+        self._summary_cancel = threading.Event()
+        self._llm_download = ""
+        self._llm_fraction = 0.0
+        self._ram_gb = summary.total_ram_gb()
         self._model_download = ""
         self._model_fraction = 0.0
         self._dictation_phase = ""
@@ -242,6 +257,10 @@ class Backend(QObject):
             (self._install_in, self._on_install_done),
             (self._dictation_in, self._on_dictation),
             (self._catalog_in, self._on_catalog),
+            (self._summary_status_in, self._on_summary_status),
+            (self._summary_done_in, self._on_summary_done),
+            (self._llm_progress_in, self._on_llm_progress),
+            (self._llm_done_in, self._on_llm_done),
             (self._model_progress_in, self._on_model_progress),
             (self._model_done_in, self._on_model_done),
             (self._dictation_text_in, self._on_dictation_text),
@@ -336,6 +355,127 @@ class Backend(QObject):
         return asr_models.catalog_entries() + [{"id": CUSTOM_MODEL_ITEM, "label": "Своя модель…"}]
 
     models = Property("QVariantList", _get_models, constant=True)
+
+    # ---------- итоги созвона на локальной модели ----------
+
+    summaryText = Property(str, lambda self: self._transcript.summary if self._transcript else "", notify=summaryChanged)  # noqa: N815
+    summaryBusy = Property(bool, lambda self: self._summary_busy, notify=summaryChanged)  # noqa: N815
+    summaryStatus = Property(str, lambda self: self._summary_status, notify=summaryProgress)  # noqa: N815
+    summaryFraction = Property(float, lambda self: self._summary_fraction, notify=summaryProgress)  # noqa: N815
+    ramGb = Property(int, lambda self: round(self._ram_gb), constant=True)  # noqa: N815
+
+    def _llm_map(self, model: summary.LlmModel) -> dict[str, object]:
+        verdict, note = summary.fit(model, self._ram_gb)
+        return {
+            "key": model.key, "title": model.title, "blurb": model.blurb, "sizeMb": model.size_mb,
+            "license": model.license, "recommended": model.recommended, "downloaded": summary.is_downloaded(model),
+            "fit": verdict, "note": note, "minRam": model.min_ram_gb,
+        }
+
+    llmCatalog = Property("QVariantList", lambda self: [self._llm_map(m) for m in summary.CATALOG], notify=llmChanged)  # noqa: N815
+    llmDownloading = Property(str, lambda self: self._llm_download, notify=llmChanged)  # noqa: N815
+    llmDownloadFraction = Property(float, lambda self: self._llm_fraction, notify=summaryProgress)  # noqa: N815
+    summaryModel = Property("QVariantMap", lambda self: self._llm_map(self.controller.summary_model()), notify=llmChanged)  # noqa: N815
+
+    @Slot()
+    @safe_slot
+    def makeSummary(self) -> None:  # noqa: N802
+        """«Сделать итоги»: при первом разе скачивает движок и модель, потом считает на этом компьютере."""
+        if self._summary_busy:
+            return
+        self._summary_busy = True
+        self._summary_cancel.clear()
+        self._on_summary_status("Готовлю модель итогов…")
+        self.summaryChanged.emit()
+
+        def work() -> None:
+            try:
+                self.controller.make_summary(self._summary_status_in.emit, self._summary_cancel.is_set)
+                self._summary_done_in.emit("ok", "")
+            except summary.SummaryError as exc:
+                self._summary_done_in.emit("error", str(exc))
+            except Exception as exc:  # noqa: BLE001 — любая причина должна дойти до человека
+                log.exception("Итоги не получились")
+                self._summary_done_in.emit("error", f"Итоги не получились: {exc}")
+
+        threading.Thread(target=work, name="summary", daemon=True).start()
+
+    @Slot()
+    @safe_slot
+    def cancelSummary(self) -> None:  # noqa: N802
+        self._summary_cancel.set()
+
+    def _on_summary_status(self, text: str) -> None:
+        self._summary_status = text
+        match = re.search(r"\((\d+)%\)", text)
+        self._summary_fraction = int(match.group(1)) / 100 if match else -1.0
+        self.summaryProgress.emit()
+
+    def _on_summary_done(self, result: str, message: str) -> None:
+        self._summary_busy = False
+        self._summary_status = ""
+        self.summaryProgress.emit()
+        self.summaryChanged.emit()
+        self.llmChanged.emit()  # модель могла скачаться
+        if result == "ok":
+            self.toast.emit("Итоги готовы и сохранены в файл транскрипта", "success")
+        elif message != "Отменено":
+            self.toast.emit(message, "error")
+
+    @Slot()
+    @safe_slot
+    def copySummary(self) -> None:  # noqa: N802
+        if self._transcript and self._transcript.summary:
+            QGuiApplication.clipboard().setText(self._transcript.summary)
+            self.toast.emit("Итоги скопированы", "success")
+
+    @Slot(str)
+    @safe_slot
+    def downloadLlm(self, key: str) -> None:  # noqa: N802
+        model = summary.CATALOG_BY_KEY.get(key)
+        if model is None or self._llm_download:
+            return
+        self._llm_download, self._llm_fraction = key, 0.0
+        self.llmChanged.emit()
+
+        def progress(text: str) -> None:
+            match = re.search(r"\((\d+)%\)", text)
+            if match:
+                self._llm_progress_in.emit(int(match.group(1)) / 100)
+
+        def work() -> None:
+            try:
+                summary.ensure_engine(progress)
+                summary.ensure_model(model, progress)
+                self._llm_done_in.emit(key, "")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Модель итогов %s не скачалась: %s", key, exc)
+                self._llm_done_in.emit(key, str(exc))
+
+        threading.Thread(target=work, name="llm-download", daemon=True).start()
+
+    def _on_llm_progress(self, fraction: float) -> None:
+        self._llm_fraction = fraction
+        self.summaryProgress.emit()
+
+    def _on_llm_done(self, key: str, error: str) -> None:
+        self._llm_download = ""
+        title = summary.CATALOG_BY_KEY[key].title
+        if error:
+            self.toast.emit(f"{title} не скачалась: {error}", "error")
+        else:
+            self.toast.emit(f"{title} скачана: итоги будут работать без интернета", "success")
+        self.llmChanged.emit()
+
+    @Slot(str)
+    @safe_slot
+    def deleteLlm(self, key: str) -> None:  # noqa: N802
+        model = summary.CATALOG_BY_KEY.get(key)
+        if model is None:
+            return
+        freed = summary.delete_model(model)
+        self.llmChanged.emit()
+        self.toast.emit(f"{model.title} удалена" + (f": освобождено {freed} МБ" if freed else ""), "success")
 
     # ---------- каталог моделей распознавания ----------
 
@@ -1143,6 +1283,7 @@ class Backend(QObject):
 
     def _on_transcript(self, transcript: Transcript, path: Path) -> None:
         self._transcript = transcript
+        self.summaryChanged.emit()
         self._partials.clear()
         self._model.clear()
         self.transcriptInfoChanged.emit()

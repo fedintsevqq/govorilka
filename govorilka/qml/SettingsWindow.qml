@@ -184,6 +184,10 @@ Window {
     }
 
     function showCatalog() { catalogList.expanded = true; scroll.contentItem.contentY = Math.max(0, catalogList.mapToItem(scroll.contentItem.contentItem, 0, 0).y - 60) }   // для снимков
+    function openAt(section) {   // открыть настройки сразу на нужном разделе
+        open()
+        if (section === "summary") Qt.callLater(() => { scroll.contentItem.contentY = Math.max(0, summarySection.y - 12) })
+    }
     function showUpdates() { scroll.contentItem.contentY = Math.max(0, updatesSection.y - 12) }   // для снимков интерфейса
 
     ScrollView {
@@ -335,7 +339,12 @@ Window {
                             info: modelData
                             selected: win.draft.model === modelData.key
                             visible: catalogList.expanded || selected
+                            downloading: backend.modelDownloading === modelData.key
+                            fraction: backend.modelDownloadFraction
+                            busy: backend.modelDownloading !== ""
                             onChoose: { win.customOpen = false; win.setValue("model", modelData.key) }
+                            onDownload: backend.downloadModel(modelData.key)
+                            onRemove: backend.deleteModel(modelData.key)
                         }
                     }
                     Rectangle {   // выбрана своя модель
@@ -512,6 +521,34 @@ Window {
                 visible: backend.accessAvailable
                 heading: "Разрешения macOS"
                 AccessRows { Layout.fillWidth: true }
+            }
+
+            Section {
+                id: summarySection
+                heading: "Итоги"
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Модель, которая пишет итоги созвона на вкладке «Итоги». Она работает на этом компьютере без интернета, скачивается один раз. "
+                          + (backend.ramGb > 0 ? "Памяти у компьютера: " + backend.ramGb + " ГБ." : "")
+                    font.pixelSize: 12
+                    lineHeight: 1.2
+                    color: Theme.textTertiary
+                }
+                Repeater {
+                    model: backend.llmCatalog
+                    ModelCard {
+                        required property var modelData
+                        info: modelData
+                        selected: win.draft.summary_model === modelData.key
+                        downloading: backend.llmDownloading === modelData.key
+                        fraction: backend.llmDownloadFraction
+                        busy: backend.llmDownloading !== ""
+                        onChoose: win.setValue("summary_model", modelData.key)
+                        onDownload: backend.downloadLlm(modelData.key)
+                        onRemove: backend.deleteLlm(modelData.key)
+                    }
+                }
             }
 
             Section {
