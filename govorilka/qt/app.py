@@ -120,8 +120,7 @@ def run(background: bool = False, updated: bool = False) -> int:
     backend.start()
     if updated:  # запущены установщиком обновления: новая версия поднялась, прежнюю копию можно удалить
         backend._startup_notices.append(f"Готово: Говорилка обновлена до версии {version.VERSION}")  # noqa: SLF001
-        if installer.can_install():
-            installer.remove_backup(Path(sys.executable))
+        installer.cleanup_after_update()
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.flush_startup_notices)
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.controller.prefetch_models)  # первый запуск: модели качаются сразу
     app.aboutToQuit.connect(lambda: (backend.shutdown(), tray.hide() if tray else None, lock.close()))

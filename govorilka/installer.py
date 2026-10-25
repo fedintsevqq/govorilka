@@ -1,4 +1,4 @@
-"""Установка обновления в один клик (Windows).
+"""Установка обновления в один клик (Windows и macOS).
 
 Порядок: скачать новый файл рядом со старым, сверить размер и контрольную сумму SHA-256, которую публикует GitHub,
 записать маленький скрипт и запустить его отдельно от программы. Скрипт ждёт, пока Говорилка закроется (запущенный
@@ -7,6 +7,11 @@
 
 Скачивание идёт только с github.com по HTTPS, а файл проверяется до запуска скрипта: повреждённый или подменённый
 файл не будет установлен. Если контрольной суммы нет, установка отказывается и предлагает скачать вручную.
+
+На Mac скачивается `.dmg`, сверяется SHA-256, образ монтируется только на чтение, а из него копируется `Говорилка.app`
+в соседнюю скрытую папку. Подпись новой программы должна быть целой и совпадать с подписью установленной (тот же
+сертификат): иначе macOS сбросила бы выданные разрешения, а чужую подпись мы не примем. Затем shell-скрипт ждёт закрытия
+программы, меняет `.app` местами (прежняя остаётся скрытой копией) и открывает новую версию.
 """
 
 from __future__ import annotations
@@ -14,8 +19,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from collections.abc import Callable
@@ -41,9 +50,33 @@ class InstallError(RuntimeError):
     """Установку остановили: текст показываем человеку, прежняя версия остаётся как была."""
 
 
+def app_bundle(executable: Path | None = None) -> Path | None:
+    """`.app`, внутри которого запущена программа (Mac)."""
+    for parent in (executable or Path(sys.executable)).parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def mac_location_problem(bundle: Path | None) -> str:
+    """Почему на Mac нельзя заменить программу прямо на месте ('' — можно)."""
+    if bundle is None:
+        return "Программа запущена не из .app"
+    text = str(bundle)
+    if "/AppTranslocation/" in text or text.startswith("/Volumes/"):
+        return "Говорилка запущена прямо из образа или карантина: перетащите её в «Программы» и откройте оттуда"
+    if not os.access(bundle.parent, os.W_OK):
+        return f"В папку {bundle.parent} нельзя записывать"
+    return ""
+
+
 def can_install() -> bool:
-    """Установка в один клик работает у собранного приложения на Windows."""
-    return sys.platform == "win32" and FROZEN
+    """Установка в один клик работает у собранного приложения: на Windows и на Mac (из «Программ» или другой своей папки)."""
+    if not FROZEN:
+        return False
+    if sys.platform == "win32":
+        return True
+    return sys.platform == "darwin" and not mac_location_problem(app_bundle())
 
 
 def _check_url(url: str) -> None:
@@ -99,15 +132,16 @@ def download(
         raise
 
 
-def verify(path: Path, info: UpdateInfo) -> None:
-    """Размер и SHA-256 должны совпасть с тем, что опубликовал GitHub, и это должна быть программа Windows."""
+def verify(path: Path, info: UpdateInfo, windows_exe: bool = True) -> None:
+    """Размер и SHA-256 должны совпасть с тем, что опубликовал GitHub; для Windows это ещё и программа (MZ)."""
     if not info.sha256:
         raise InstallError("У релиза нет контрольной суммы: проверить файл нельзя. Скачайте его вручную")
     if info.size and path.stat().st_size != info.size:
         raise InstallError("Размер скачанного файла не совпал с релизом: скачивание оборвалось")
-    with path.open("rb") as handle:
-        if handle.read(2) != b"MZ":
-            raise InstallError("Скачанный файл не похож на программу Windows")
+    if windows_exe:
+        with path.open("rb") as handle:
+            if handle.read(2) != b"MZ":
+                raise InstallError("Скачанный файл не похож на программу Windows")
     if sha256_of(path).lower() != info.sha256.lower():
         raise InstallError("Контрольная сумма не совпала: файл повреждён или подменён. Он не будет установлен")
 
@@ -221,3 +255,179 @@ def prepare(
 def remove_backup(current: Path) -> None:
     """Новая версия запустилась (флаг --updated): прежнюю копию можно удалить."""
     Path(f"{current}{BACKUP_SUFFIX}").unlink(missing_ok=True)
+
+
+# ---------- macOS ----------
+
+LEAF_HASH = re.compile(r'certificate leaf = H"([0-9a-fA-F]+)"')
+MAC_NEW_NAME, MAC_BACKUP_NAME = ".{stem}.new.app", ".{stem}.old.app"
+Runner = Callable[..., "subprocess.CompletedProcess[str]"]
+
+
+def _run(command: list[str], timeout: float = 300) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
+
+
+def leaf_hash(requirement_text: str) -> str:
+    """Отпечаток сертификата из строки `designated => … certificate leaf = H"…"` ('' — программа без такого условия)."""
+    match = LEAF_HASH.search(requirement_text)
+    return match.group(1).lower() if match else ""
+
+
+def designated_requirement(app: Path, run: Runner = _run) -> str:
+    result = run(["codesign", "-d", "-r-", str(app)])
+    return f"{result.stdout}\n{result.stderr}"
+
+
+def verify_app_signature(new_app: Path, current_app: Path, run: Runner = _run) -> None:
+    """Подпись новой программы цела и сделана тем же сертификатом, что у установленной."""
+    checked = run(["codesign", "--verify", "--deep", "--strict", str(new_app)])
+    if checked.returncode != 0:
+        raise InstallError("Подпись новой версии повреждена или отсутствует. Она не будет установлена")
+    wanted = leaf_hash(designated_requirement(current_app, run))
+    if not wanted:  # установленная версия подписана без постоянного сертификата: сверять нечего, остаётся SHA-256
+        return
+    if leaf_hash(designated_requirement(new_app, run)) != wanted:
+        raise InstallError("Новая версия подписана другим сертификатом. Она не будет установлена")
+
+
+def find_app(folder: Path) -> Path:
+    apps = sorted(p for p in folder.iterdir() if p.suffix == ".app" and p.is_dir())
+    if not apps:
+        raise InstallError("В скачанном образе нет программы")
+    return apps[0]
+
+
+def stage_from_dmg(dmg: Path, current_app: Path, staged: Path, run: Runner = _run) -> None:
+    """Монтирует образ только на чтение, проверяет подпись и копирует программу в staged."""
+    mount = Path(tempfile.mkdtemp(prefix="govorilka-mnt-"))
+    attached = False
+    try:
+        result = run(["hdiutil", "attach", "-nobrowse", "-readonly", "-noverify", "-noautoopen", "-mountpoint", str(mount), str(dmg)])
+        if result.returncode != 0:
+            raise InstallError(f"Не удалось открыть образ: {(result.stderr or result.stdout).strip()[:200]}")
+        attached = True
+        source = find_app(mount)
+        verify_app_signature(source, current_app, run)
+        shutil.rmtree(staged, ignore_errors=True)
+        copied = run(["ditto", str(source), str(staged)])
+        if copied.returncode != 0:
+            raise InstallError(f"Не удалось скопировать программу: {copied.stderr.strip()[:200]}")
+        verify_app_signature(staged, current_app, run)  # уже копия: ту же проверку, что увидит macOS при запуске
+    except Exception:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    finally:
+        if attached:
+            run(["hdiutil", "detach", "-force", str(mount)])
+        shutil.rmtree(mount, ignore_errors=True)
+
+
+def prepare_mac(
+    info: UpdateInfo,
+    current_app: Path,
+    on_status: Callable[[str], None],
+    cancelled: Callable[[], bool] = lambda: False,
+    run: Runner = _run,
+) -> Path:
+    """Скачивает и проверяет образ, кладёт новую программу рядом с текущей. Возвращает путь к ней."""
+    if not info.asset_url:
+        raise InstallError("Для вашей системы в релизе нет файла")
+    problem = mac_location_problem(current_app)
+    if problem:
+        raise InstallError(problem)
+    staged = current_app.with_name(MAC_NEW_NAME.format(stem=current_app.stem))
+    work = Path(tempfile.mkdtemp(prefix="govorilka-update-"))
+    try:
+        dmg = work / "update.dmg"
+        download(info.asset_url, dmg, info.size, on_status, cancelled)
+        on_status("Проверяю скачанный файл…")
+        verify(dmg, info, windows_exe=False)
+        stage_from_dmg(dmg, current_app, staged, run)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return staged
+
+
+def mac_swap_script(current: Path, staged: Path, wait_pid: int, max_wait: int = SWAP_WAIT_S, restart: str | None = None) -> str:
+    """Скрипт sh: ждёт закрытия Говорилки, меняет .app местами, открывает новую версию. restart — команда запуска (в тестах подменяется)."""
+    backup = current.with_name(MAC_BACKUP_NAME.format(stem=current.stem))
+    q = shlex.quote
+    start = restart or f"open {q(str(current))} --args {UPDATED_FLAG}"
+    return "\n".join([
+        "#!/bin/sh",
+        f"TARGET={q(str(current))}",
+        f"NEW={q(str(staged))}",
+        f"BACKUP={q(str(backup))}",
+        'SELF="$0"',
+        "tries=0",
+        "fail() {",
+        '  if [ -e "$BACKUP" ] && [ ! -e "$TARGET" ]; then mv "$BACKUP" "$TARGET"; fi',
+        '  rm -rf "$NEW"',
+        '  open "$TARGET"',
+        '  rm -f "$SELF"',
+        "  exit 0",
+        "}",
+        f'while kill -0 {wait_pid} 2>/dev/null; do',
+        "  tries=$((tries+1))",
+        f'  if [ "$tries" -ge {max_wait} ]; then fail; fi',
+        "  sleep 1",
+        "done",
+        "tries=0",
+        'rm -rf "$BACKUP"',
+        'until mv "$TARGET" "$BACKUP" 2>/dev/null; do',
+        "  tries=$((tries+1))",
+        f'  if [ "$tries" -ge {max_wait} ]; then fail; fi',
+        "  sleep 1",
+        "done",
+        'if ! mv "$NEW" "$TARGET"; then fail; fi',
+        'xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null',
+        start,
+        'rm -f "$SELF"',
+        "",
+    ])
+
+
+def spawn_swap_mac(current: Path, staged: Path, **options: object) -> Path:
+    """Пишет скрипт рядом со скрытой копией и запускает его отдельно от программы."""
+    script = staged.with_name(".govorilka-update.sh")
+    script.write_text(mac_swap_script(current, staged, os.getpid(), **options), encoding="utf-8")  # type: ignore[arg-type]
+    script.chmod(0o700)
+    subprocess.Popen(  # noqa: S603 — скрипт мы только что написали сами
+        ["/bin/sh", str(script)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+    )
+    return script
+
+
+def mac_backup(current: Path) -> Path:
+    return current.with_name(MAC_BACKUP_NAME.format(stem=current.stem))
+
+
+# ---------- одна точка входа ----------
+
+
+def install(info: UpdateInfo, on_status: Callable[[str], None], cancelled: Callable[[], bool] = lambda: False) -> None:
+    """Скачивает, проверяет и запускает подмену. После возврата программа должна закрыться."""
+    if sys.platform == "darwin":
+        bundle = app_bundle()
+        if bundle is None:
+            raise InstallError("Программа запущена не из .app")
+        spawn_swap_mac(bundle, prepare_mac(info, bundle, on_status, cancelled))
+        return
+    current = Path(sys.executable)
+    spawn_swap(current, prepare(info, current, on_status, cancelled))
+
+
+def cleanup_after_update() -> None:
+    """Новая версия запустилась (флаг --updated): удаляем прежнюю копию."""
+    if sys.platform == "darwin":
+        bundle = app_bundle()
+        if bundle is not None:
+            shutil.rmtree(mac_backup(bundle), ignore_errors=True)
+    else:
+        remove_backup(Path(sys.executable))

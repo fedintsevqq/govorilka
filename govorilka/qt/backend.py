@@ -417,12 +417,10 @@ class Backend(QObject):
             return
         self._installing = True
         self.updateChanged.emit()
-        current = Path(sys.executable)
 
         def work() -> None:
             try:
-                new = installer.prepare(info, current, self._status_in.emit)
-                installer.spawn_swap(current, new)
+                installer.install(info, self._status_in.emit)
                 self._install_in.emit(True, "")
             except installer.InstallError as exc:
                 log.warning("Обновление не установлено: %s", exc)

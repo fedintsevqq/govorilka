@@ -4,7 +4,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -152,3 +152,112 @@ def test_backup_is_removed_after_the_new_version_started(tmp_path):
     installer.remove_backup(current)
     assert not backup.exists()
     installer.remove_backup(current)  # повторно: ничего не случается
+
+
+# ---------- macOS ----------
+
+import shutil as _shutil
+from types import SimpleNamespace
+
+sh_only = pytest.mark.skipif(sys.platform == "win32" or _shutil.which("sh") is None, reason="нужен sh")
+HASH_A, HASH_B = "a" * 40, "b" * 40
+
+
+def requirement(hash_=HASH_A):
+    return f'designated => identifier "ru.govorilka" and certificate leaf = H"{hash_.upper()}"'
+
+
+def fake_run(hashes, *, verify_ok=True, attach_ok=True, apps=("Govorilka.app",)):
+    """Подставной codesign/hdiutil/ditto: hashes — отпечатки по порядку вызовов `codesign -d -r-`."""
+    calls, queue = [], list(hashes)
+
+    def run(command, timeout=300):
+        calls.append(command[0])
+        out = SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[0] == "codesign" and command[1] == "--verify":
+            out.returncode = 0 if verify_ok else 1
+        elif command[0] == "codesign":
+            out.stderr = requirement(queue.pop(0))
+        elif command[0] == "hdiutil" and command[1] == "attach":
+            if not attach_ok:
+                return SimpleNamespace(returncode=1, stdout="", stderr="не образ")
+            mount = Path(command[command.index("-mountpoint") + 1])
+            for name in apps:
+                (mount / name).mkdir()
+        elif command[0] == "ditto":
+            Path(command[2]).mkdir()
+        return out
+
+    return run, calls
+
+
+def test_leaf_hash_is_read_from_the_designated_requirement():
+    assert installer.leaf_hash(requirement()) == HASH_A
+    assert installer.leaf_hash('designated => cdhash H"ab"') == ""  # подпись без постоянного сертификата
+
+
+def test_signature_must_be_valid_and_from_the_same_certificate(tmp_path):
+    run, _ = fake_run([HASH_A, HASH_A])
+    installer.verify_app_signature(tmp_path / "new.app", tmp_path / "old.app", run)
+    run, _ = fake_run([HASH_A, HASH_B])
+    with pytest.raises(installer.InstallError, match="другим сертификатом"):
+        installer.verify_app_signature(tmp_path / "new.app", tmp_path / "old.app", run)
+    run, _ = fake_run([], verify_ok=False)
+    with pytest.raises(installer.InstallError, match="повреждена"):
+        installer.verify_app_signature(tmp_path / "new.app", tmp_path / "old.app", run)
+
+
+def test_unsigned_installed_version_is_accepted_after_sha_check_only(tmp_path):
+    def run(command, timeout=300):
+        return SimpleNamespace(returncode=0, stdout="", stderr='designated => cdhash H"ab"')
+
+    installer.verify_app_signature(tmp_path / "new.app", tmp_path / "old.app", run)
+
+
+def test_stage_from_dmg_copies_the_app_and_always_detaches(tmp_path):
+    current, staged = tmp_path / "Govorilka.app", tmp_path / ".Govorilka.new.app"
+    run, calls = fake_run([HASH_A, HASH_A, HASH_A, HASH_A])
+    installer.stage_from_dmg(tmp_path / "u.dmg", current, staged, run)
+    assert staged.is_dir() and calls[-1] == "hdiutil"  # образ отсоединён
+    run, calls = fake_run([HASH_A, HASH_B])
+    with pytest.raises(installer.InstallError):
+        installer.stage_from_dmg(tmp_path / "u.dmg", current, tmp_path / ".x.app", run)
+    assert not (tmp_path / ".x.app").exists() and calls[-1] == "hdiutil"  # чужая подпись: ничего не осталось, образ отсоединён
+    run, _ = fake_run([], apps=())
+    with pytest.raises(installer.InstallError, match="нет программы"):
+        installer.stage_from_dmg(tmp_path / "u.dmg", current, staged, run)
+    run, calls = fake_run([], attach_ok=False)
+    with pytest.raises(installer.InstallError, match="открыть образ"):
+        installer.stage_from_dmg(tmp_path / "u.dmg", current, staged, run)
+    assert "ditto" not in calls
+
+
+def test_mac_refuses_to_replace_itself_from_a_dmg_or_quarantine():
+    assert installer.app_bundle(PurePosixPath("/Applications/Govorilka.app/Contents/MacOS/Govorilka")) == PurePosixPath("/Applications/Govorilka.app")
+    assert installer.app_bundle(PurePosixPath("/usr/bin/python3")) is None
+    assert "образа" in installer.mac_location_problem(PurePosixPath("/Volumes/Govorilka/Govorilka.app"))
+    assert "образа" in installer.mac_location_problem(PurePosixPath("/private/var/folders/x/AppTranslocation/ABC/d/Govorilka.app"))
+    assert installer.mac_location_problem(None)
+
+
+@sh_only
+def test_mac_swap_script_replaces_the_bundle_keeps_a_backup_and_starts_it(tmp_path):
+    current, staged = tmp_path / "Govorilka.app", tmp_path / ".Govorilka.new.app"
+    (current / "Contents").mkdir(parents=True)
+    (current / "Contents" / "v.txt").write_text("OLD")
+    (staged / "Contents").mkdir(parents=True)
+    (staged / "Contents" / "v.txt").write_text("NEW")
+    marker = tmp_path / "started.txt"
+    running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])
+    script = tmp_path / "u.sh"
+    script.write_text(installer.mac_swap_script(current, staged, running.pid, max_wait=20, restart=f"echo started > {marker}"))
+    subprocess.run(["sh", str(script)], timeout=60, check=True)
+    running.wait(timeout=10)
+    assert (current / "Contents" / "v.txt").read_text() == "NEW" and not staged.exists()
+    assert (installer.mac_backup(current) / "Contents" / "v.txt").read_text() == "OLD"
+    assert marker.exists() and not script.exists()
+
+
+def test_mac_swap_script_text_quotes_awkward_paths(tmp_path):
+    text = installer.mac_swap_script(PurePosixPath("/Apps/My App's.app"), PurePosixPath("/Apps/.new.app"), 42)
+    assert "'/Apps/My App'\"'\"'s.app'" in text and "kill -0 42" in text and "--updated" in text

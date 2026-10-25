@@ -852,14 +852,13 @@ def test_install_update_prepares_swaps_and_quits_the_app(backend, qapp, monkeypa
     backend._update = info
     calls = []
     monkeypatch.setattr(installer, "can_install", lambda: True)
-    monkeypatch.setattr(installer, "prepare", lambda i, cur, status: calls.append("prepare") or cur.with_name("new.exe"))
-    monkeypatch.setattr(installer, "spawn_swap", lambda cur, new: calls.append("swap"))
+    monkeypatch.setattr(installer, "install", lambda i, status: calls.append("install"))
     quits = []
     monkeypatch.setattr(backend, "quit", lambda: quits.append(1))
     backend.installUpdate()
     assert backend.installing
     assert pump(qapp, lambda: quits, timeout=5)
-    assert calls == ["prepare", "swap"]
+    assert calls == ["install"]
 
 
 def test_install_update_failure_keeps_the_app_and_explains(backend, qapp, monkeypatch):
@@ -875,7 +874,7 @@ def test_install_update_failure_keeps_the_app_and_explains(backend, qapp, monkey
     def broken(*a, **k):
         raise installer.InstallError("Контрольная сумма не совпала")
 
-    monkeypatch.setattr(installer, "prepare", broken)
+    monkeypatch.setattr(installer, "install", broken)
     quits = []
     monkeypatch.setattr(backend, "quit", lambda: quits.append(1))
     backend.installUpdate()
