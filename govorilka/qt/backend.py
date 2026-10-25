@@ -202,6 +202,7 @@ class Backend(QObject):
             (self._ai_in, self._on_ai_result),
             (self._access_done, self._on_access_done),
             (self._custom_in, self._on_custom_checked),
+            (self._collect_in, self._collect_garbage),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -309,6 +310,7 @@ class Backend(QObject):
 
     customModelChecked = Signal(bool, str, str)  # noqa: N815 — удалось, сообщение, ключ модели
     _custom_in = Signal(bool, str, str)
+    _collect_in = Signal()  # сборка мусора после выгрузки моделей: только в главном потоке
 
     @Slot(str, str, str, bool)
     @safe_slot
@@ -338,14 +340,18 @@ class Backend(QObject):
                 log.exception("Своя модель не прошла проверку")
                 message = str(exc)
             finally:
-                del recognizer
-                gc.collect()
+                del recognizer  # веса освободятся сразу; сборка мусора — в главном потоке (см. _on_custom_checked)
             self._custom_in.emit(ok, message, key if ok else "")
 
         threading.Thread(target=work, name="check-custom-model", daemon=True).start()
 
+    @Slot()
+    def _collect_garbage(self) -> None:
+        gc.collect()  # методом QObject: сигнал придёт в поток самого объекта, то есть в главный
+
     def _on_custom_checked(self, ok: bool, message: str, key: str) -> None:
         self._checking_model = False
+        gc.collect()
         self._status_in.emit("Готово")
         self.customModelChecked.emit(ok, message, key)
 
@@ -904,6 +910,9 @@ class _Relay(Listener):
 
     def on_hotkey_release(self) -> None:
         self._b._release_in.emit()
+
+    def on_models_unloaded(self) -> None:
+        self._b._collect_in.emit()
 
     def on_finished(self, path: Path | None, message: str) -> None:
         self._b._finished_in.emit(path, message)

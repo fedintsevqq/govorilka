@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import gc
 import logging
 import subprocess
 import sys
@@ -70,6 +69,7 @@ class Listener:
     def on_hotkey(self) -> None: ...
     def on_hotkey_release(self) -> None: ...
     def on_finished(self, path: Path | None, message: str) -> None: ...
+    def on_models_unloaded(self) -> None: ...  # сборку мусора надо делать в главном потоке: из фонового она трогает объекты Qt
 
 
 @dataclass(frozen=True)
@@ -209,7 +209,7 @@ class Controller:
             return False
         self.engines = None
         self._unload_timer = None
-        gc.collect()  # веса в памяти освобождаются только после сборки мусора
+        self.listener.on_models_unloaded()  # веса освобождаются после сборки мусора; её делает интерфейс в главном потоке
         log.info("Модели выгружены из памяти: запись не идёт")
         return True
 

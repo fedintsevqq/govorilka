@@ -273,3 +273,11 @@ def test_unload_is_scheduled_after_a_recording_and_cancelled_by_the_next_one(app
     c.settings = c.settings.__class__(unload_after_min=0)  # «никогда»
     c._schedule_unload()
     assert c._unload_timer is None
+
+
+def test_unloading_asks_the_interface_for_garbage_collection_instead_of_doing_it_in_a_timer_thread(app):
+    c, events = app
+    calls = []
+    events.on_models_unloaded = lambda: calls.append(1)
+    c.engines = object()
+    assert c.unload_models() and calls == [1]
