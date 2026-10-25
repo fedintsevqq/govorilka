@@ -959,7 +959,7 @@ def test_dragging_selects_across_replies_and_ctrl_c_copies_them(feed, qapp):
     QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(end.x()), int(end.y())))
     pump(qapp, lambda: False, timeout=0.1)
     assert first.property("selectedText") and second.property("selectedText")  # подсвечены обе реплики
-    QTest.keyClick(window, Qt.Key_C, Qt.ControlModifier  # на Mac Qt называет так ⌘)
+    QTest.keyClick(window, Qt.Key_C, Qt.ControlModifier)  # на Mac Qt называет так ⌘
     assert pump(qapp, lambda: bool(window.property("copied").toVariant()))
     text = model.selection_text(*[int(v) for v in window.property("copied").toVariant()])
     assert text.startswith("[00:01] Я: ") and "\n[00:05] Собеседник 1: Вт" in text
@@ -972,7 +972,7 @@ def test_click_clears_the_selection_and_ctrl_a_selects_everything(feed, qapp):
     window, _ = feed
     first, second = bodies(window)[:2]
     QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(first.mapToScene(QPointF(10, 8)).x()), int(first.mapToScene(QPointF(10, 8)).y())))
-    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier  # на Mac Qt называет так ⌘)
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier)  # на Mac Qt называет так ⌘
     pump(qapp, lambda: False, timeout=0.1)
     assert first.property("selectedText") == first.property("text") and second.property("selectedText") == second.property("text")
     point = first.mapToScene(QPointF(30, 8))
