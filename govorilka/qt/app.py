@@ -74,6 +74,9 @@ LIVE_SKIP = ("Пауза", "Отметка", "Расшифровать", "Вый
              "Установить", "Отправить", "Скопировать для", "Удалить", "Сбросить", "Изменить…", "Выбрать папку")
 
 
+LIVE_SKIP_EXTRA: list[str] = []
+
+
 def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None:
     """Самопроверка в настоящем окне (--selftest-live): нажимаем все безопасные кнопки главного окна и настроек,
     потом даём поработать фоновым потокам. Упадёт — CI покажет crash.log с трассировкой потоков."""
@@ -108,7 +111,7 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
                     continue
                 if child.isVisible() and ("Button" in name or "ChipToggle" in name) and child.isEnabled():
                     label = str(child.property("text") or child.property("tip") or child.property("iconName") or name)
-                    if not any(word in label for word in LIVE_SKIP) and child.width() > 4:
+                    if not any(word in label for word in (*LIVE_SKIP, *LIVE_SKIP_EXTRA)) and child.width() > 4:
                         found.append((label, child))
                 walk(child)
 
@@ -128,8 +131,39 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
             for _ in range(5):
                 app.processEvents()
 
+    mode = os.environ.get("GOVORILKA_LIVE_MODE", "all")  # для поиска причины сбоя: только часть шагов
+
+    def wait(seconds: float) -> None:
+        import time
+
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            app.processEvents()
+            time.sleep(0.02)
+
     def step() -> None:
         backend.finishTour()
+        if mode == "settings":  # только открыть окно настроек и подождать
+            log.info("Самопроверка: открываю настройки")
+            root.findChild(QObject, "settings").open()
+            wait(6)
+            report.write_text("OK settings\n", encoding="utf-8")
+            app.quit()
+            return
+        if mode == "guide":
+            log.info("Самопроверка: открываю «Все возможности»")
+            backend.showFeatures("all")
+            wait(6)
+            report.write_text("OK guide\n", encoding="utf-8")
+            app.quit()
+            return
+        if mode == "main":  # кнопки главного окна, кроме настроек
+            LIVE_SKIP_EXTRA.append("Настройки")
+            click_all(root, "окно")
+            wait(6)
+            report.write_text("OK main\n" + "\n".join(clicked) + "\n", encoding="utf-8")
+            app.quit()
+            return
         click_all(root, "окно")
         settings = root.findChild(QObject, "settings")
         if settings is not None:

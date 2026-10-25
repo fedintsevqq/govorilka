@@ -136,23 +136,31 @@ jobs:
           code=$?
           cat ci-data/selftest-ui.txt
           exit $code
-      # настоящее окно macOS (не offscreen): программа сама жмёт кнопки и 20 секунд работает. Сбой — трассировка из crash.log
+      # настоящее окно macOS (не offscreen): программа сама жмёт кнопки и работает. Сбой — трассировка из crash.log.
+      # Несколько коротких запусков по отдельности, чтобы было видно, что именно роняет программу.
       - name: Self-test live window (click every safe button)
         run: |
           set +e
-          dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-live
-          code=$?
-          cat ci-data/selftest-live.txt 2>/dev/null
-          echo "--- crash.log"; cat ci-data/crash.log 2>/dev/null
-          echo "--- log"; tail -n 60 ci-data/govorilka.log 2>/dev/null
-          if [ "$code" = 0 ] && grep -q '^OK' ci-data/selftest-live.txt; then exit 0; fi
-          echo "=== повтор без опроса клавиатуры: виновата ли она"
-          rm -f ci-data/selftest-live.txt
-          GOVORILKA_LIVE_NO_KEYBOARD=1 dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-live
-          echo "без клавиатуры: код $?"; cat ci-data/selftest-live.txt 2>/dev/null
-          echo "--- crash.log"; tail -n 60 ci-data/crash.log 2>/dev/null
-          echo "--- log"; tail -n 40 ci-data/govorilka.log 2>/dev/null
-          exit 1
+          failed=0
+          run_live() {
+            rm -f ci-data/selftest-live.txt
+            env "$@" dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-live
+            code=$?
+            result=$(head -1 ci-data/selftest-live.txt 2>/dev/null)
+            echo "=== $* -> код $code, $result"
+            if [ "$code" != 0 ] || [ "${result%% *}" != OK ]; then
+              failed=1
+              echo "--- crash.log"; tail -n 40 ci-data/crash.log 2>/dev/null
+              echo "--- log"; tail -n 15 ci-data/govorilka.log 2>/dev/null
+            fi
+          }
+          run_live GOVORILKA_LIVE_MODE=settings
+          run_live GOVORILKA_LIVE_MODE=settings QSG_RENDER_LOOP=basic
+          run_live GOVORILKA_LIVE_MODE=guide
+          run_live GOVORILKA_LIVE_MODE=main
+          run_live GOVORILKA_LIVE_MODE=all
+          run_live GOVORILKA_LIVE_MODE=all QSG_RENDER_LOOP=basic
+          exit $failed
       - name: Build dmg
         run: |
           suffix=$([ "$GOVORILKA_ARCH" = arm64 ] && echo apple-silicon || echo intel)
