@@ -287,11 +287,11 @@ class Controller:
                 failure = f"Запись остановилась с ошибкой: {exc}. Проверьте папку с транскриптами."
             finally:
                 self._set_state(AppState.IDLE)
-                self._schedule_unload()
             if failure:
                 self.listener.on_error(failure)
             else:
                 self.listener.on_finished(saved, f"Запись остановлена. Сохранено: {saved}")
+            self._schedule_unload()  # после уведомлений: интерфейс узнаёт о конце записи без задержки
 
         self._stopping = threading.Thread(target=finish, name="stop-recording", daemon=True)
         self._stopping.start()
@@ -361,7 +361,6 @@ class Controller:
                 log.exception("Ошибка после расшифровки файла")
         self.file_job = None
         self._set_state(AppState.IDLE)
-        self._schedule_unload()
         if saved is None and error != CANCELLED:
             self.listener.on_error(error or "Не получилось расшифровать файл")
         elif saved is None:
@@ -369,6 +368,7 @@ class Controller:
         else:
             note = "Готово" if error is None else f"{error} (сохранено то, что успели расшифровать)"
             self.listener.on_finished(saved, f"{note}. Сохранено: {saved}")
+        self._schedule_unload()
 
     def _after_file(self, job: FileJob) -> None:
         if job.diarizer is not None and job.diarizer.history:
