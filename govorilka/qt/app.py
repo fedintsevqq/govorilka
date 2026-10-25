@@ -76,8 +76,20 @@ LIVE_SKIP = ("Пауза", "Отметка", "Расшифровать", "Вый
 def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None:
     """Самопроверка в настоящем окне (--selftest-live): нажимаем все безопасные кнопки главного окна и настроек,
     потом даём поработать фоновым потокам. Упадёт — CI покажет crash.log с трассировкой потоков."""
-    from PySide6.QtCore import QPoint
-    from PySide6.QtTest import QTest
+    from PySide6.QtCore import QCoreApplication, QPointF
+    from PySide6.QtGui import QKeyEvent, QMouseEvent
+
+    # QtTest в собранное приложение не входит: нажатия собираем из обычных событий Qt
+    def press(window: QQuickWindow, point: QPointF) -> None:
+        global_point = QPointF(window.mapToGlobal(point.toPoint()))
+        for kind, buttons in ((QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton),
+                              (QEvent.Type.MouseButtonRelease, Qt.MouseButton.NoButton)):
+            QCoreApplication.sendEvent(window, QMouseEvent(kind, point, global_point, Qt.MouseButton.LeftButton,
+                                                           buttons, Qt.KeyboardModifier.NoModifier))
+
+    def escape(window: QQuickWindow) -> None:
+        for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            QCoreApplication.sendEvent(window, QKeyEvent(kind, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
 
     from govorilka.config import DATA_DIR
 
@@ -104,13 +116,11 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
 
     def click_all(window: QQuickWindow, where: str) -> None:
         for label, item in buttons(window)[:40]:
-            centre = item.mapToScene(item.boundingRect().center())
-            QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
-                             QPoint(int(centre.x()), int(centre.y())))
+            press(window, item.mapToScene(item.boundingRect().center()))
             clicked.append(f"{where}: {label}")
             for _ in range(10):
                 app.processEvents()
-            QTest.keyClick(window, Qt.Key.Key_Escape)  # закрыть открывшееся меню или окно
+            escape(window)  # закрыть открывшееся меню или окно
             for _ in range(5):
                 app.processEvents()
 
