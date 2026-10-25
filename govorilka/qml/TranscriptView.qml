@@ -4,12 +4,81 @@ import QtQuick.Controls
 // Лента транскрипта. Реплики одного говорящего идут группой: кружок с инициалом и имя только у первой.
 // Новые строки появляются коротким подъёмом с растворением; если вы прокрутили вверх, лента не дёргается,
 // а снизу появляется кнопка «к последней фразе».
+// Текст выделяется мышью сплошь через несколько реплик, как в обычном документе: Ctrl+C (⌘C) копирует выделенное,
+// Ctrl+A (⌘A) выделяет всё, правая кнопка открывает меню. Само копирование делает Backend (copyRequested).
 Item {
     id: root
     property var model
     property string hotkeyLabel: ""
     property bool recording: false
     signal renameRequested(string voiceId, string name, color tint)
+    signal copyRequested(int startRow, int startPos, int endRow, int endPos)
+    signal copyAllRequested()
+
+    // ---------- выделение: от (aRow, aPos) — где нажали, до (bRow, bPos) — куда дотянули ----------
+    readonly property int endOfRow: 1000000   // «до конца строки», если строка сейчас не создана (за краем ленты)
+    property int aRow: -1
+    property int aPos: 0
+    property int bRow: -1
+    property int bPos: 0
+    readonly property bool hasSelection: aRow >= 0 && bRow >= 0 && (aRow !== bRow || aPos !== bPos)
+    readonly property color selectionTint: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
+
+    function ordered() {
+        return aRow < bRow || (aRow === bRow && aPos <= bPos) ? [aRow, aPos, bRow, bPos] : [bRow, bPos, aRow, aPos]
+    }
+    function rangeFor(row, length) {   // какой кусок строки row выделен: [начало, конец]
+        if (!hasSelection) return [0, 0]
+        const o = ordered()
+        if (row < o[0] || row > o[2]) return [0, 0]
+        return [row === o[0] ? Math.min(o[1], length) : 0, row === o[2] ? Math.min(o[3], length) : length]
+    }
+    function rowSelected(row) {
+        if (!hasSelection) return false
+        const o = ordered()
+        return row >= o[0] && row <= o[2]
+    }
+    function clearSelection() { aRow = -1; bRow = -1 }
+    function selectAll() {
+        if (list.count === 0) return
+        aRow = 0; aPos = 0; bRow = list.count - 1; bPos = endOfRow
+    }
+    function openMenu(x, y) { contextMenu.popup(selector, x, y) }
+    function copySelection() {
+        if (!hasSelection) return
+        const o = ordered()
+        root.copyRequested(o[0], o[1], o[2], o[3])
+    }
+    // Точка (x, y) в координатах ленты: какая строка и какой символ под ней.
+    function hit(x, y) {
+        if (list.count === 0) return null
+        const cy = Math.max(0, Math.min(y, list.height - 1))
+        let index = list.indexAt(x, cy + list.contentY)
+        for (let step = 1; index < 0 && step <= 8; step++)   // промежутки между строками
+            index = list.indexAt(x, cy + list.contentY + (y < list.height / 2 ? step : -step) * 2)
+        if (index < 0)
+            return y >= list.height / 2 ? { row: list.count - 1, pos: endOfRow, header: false } : { row: 0, pos: 0, header: false }
+        const loader = list.itemAtIndex(index)
+        const row = loader ? loader.item : null
+        if (!row || !row.body)   // отметка или пауза: строка выделяется целиком
+            return { row: index, pos: x > list.width / 2 ? endOfRow : 0, header: false }
+        const inBody = row.body.mapFromItem(list, x, y)
+        if (inBody.y < 0) {
+            const onName = row.header.visible && row.header.contains(row.header.mapFromItem(list, x, y))
+            return { row: index, pos: 0, header: onName }
+        }
+        if (inBody.y > row.body.height) return { row: index, pos: row.body.length, header: false }
+        return { row: index, pos: row.body.positionAt(inBody.x, inBody.y), header: false }
+    }
+
+    Shortcut { sequences: [StandardKey.Copy]; enabled: root.hasSelection; onActivated: root.copySelection() }
+    Shortcut { sequences: [StandardKey.SelectAll]; enabled: list.count > 0 && root.activeFocus; onActivated: root.selectAll() }
+    Keys.onEscapePressed: root.clearSelection()
+    Connections {   // лента начата заново (новая запись, другой файл): старое выделение не к чему привязать
+        target: root.model
+        ignoreUnknownSignals: true
+        function onModelReset() { root.clearSelection() }
+    }
 
     function initials(name) {
         if (name === "Я") return "Я"
@@ -39,6 +108,7 @@ Item {
 
         delegate: Loader {
             width: ListView.view.width
+            required property int index
             required property string kind
             required property string time
             required property string speaker
@@ -55,6 +125,82 @@ Item {
         }
     }
 
+    MouseArea {
+        id: selector
+        anchors.fill: list
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        preventStealing: true
+        property real lastX: 0
+        property real lastY: 0
+        function extend(x, y) {
+            lastX = x; lastY = y
+            const p = root.hit(x, y)
+            if (p) { root.bRow = p.row; root.bPos = p.pos }
+        }
+        onPressed: (mouse) => {
+            const p = root.hit(mouse.x, mouse.y)
+            if (mouse.button === Qt.RightButton) {
+                if (p && !root.rowSelected(p.row)) root.clearSelection()
+                root.forceActiveFocus()
+                root.openMenu(mouse.x, mouse.y)
+                return
+            }
+            if (p && p.header) { mouse.accepted = false; return }   // нажали на имя: это кнопка «подписать»
+            root.forceActiveFocus()   // забираем фокус у полей ввода, чтобы Ctrl+C достался ленте
+            if (!p) { root.clearSelection(); return }
+            if ((mouse.modifiers & Qt.ShiftModifier) && root.aRow >= 0) { extend(mouse.x, mouse.y); return }
+            root.aRow = p.row; root.aPos = p.pos; root.bRow = p.row; root.bPos = p.pos
+            lastX = mouse.x; lastY = mouse.y
+        }
+        onPositionChanged: (mouse) => { if (pressedButtons & Qt.LeftButton) extend(mouse.x, mouse.y) }
+        onDoubleClicked: (mouse) => {   // двойной щелчок — слово
+            const p = root.hit(mouse.x, mouse.y)
+            if (!p || p.header) return
+            const loader = list.itemAtIndex(p.row)
+            const body = loader && loader.item ? loader.item.body : null
+            if (!body) { root.aRow = p.row; root.aPos = 0; root.bRow = p.row; root.bPos = root.endOfRow; return }
+            body.cursorPosition = Math.min(p.pos, body.length)
+            body.selectWord()
+            root.aRow = p.row; root.aPos = body.selectionStart; root.bRow = p.row; root.bPos = body.selectionEnd
+        }
+        onWheel: (wheel) => wheel.accepted = false   // колесо прокручивает ленту как обычно
+        // Дотянули до края: лента прокручивается сама, выделение растёт.
+        Timer {
+            interval: 30
+            repeat: true
+            running: selector.pressed && (selector.pressedButtons & Qt.LeftButton) && (selector.lastY < 24 || selector.lastY > selector.height - 24)
+            onTriggered: {
+                const speed = selector.lastY < 24 ? -Math.min(40, 24 - selector.lastY + 6) : Math.min(40, selector.lastY - selector.height + 30)
+                const top = list.originY - list.topMargin
+                const bottom = Math.max(top, list.originY + list.contentHeight + list.bottomMargin - list.height)
+                list.follow = false
+                list.contentY = Math.max(top, Math.min(list.contentY + speed, bottom))
+                selector.extend(selector.lastX, selector.lastY)
+            }
+        }
+    }
+
+    component MenuRow: MenuItem {
+        id: menuRow
+        property string keys: ""
+        implicitHeight: 34
+        contentItem: Item {
+            Text { anchors.left: parent.left; anchors.leftMargin: 4; anchors.verticalCenter: parent.verticalCenter; text: menuRow.text; font.pixelSize: 13; color: menuRow.enabled ? Theme.text : Theme.textTertiary }
+            Text { anchors.right: parent.right; anchors.rightMargin: 4; anchors.verticalCenter: parent.verticalCenter; text: menuRow.keys; font.pixelSize: 12; color: Theme.textTertiary }
+        }
+        background: Rectangle { radius: 7; color: menuRow.highlighted && menuRow.enabled ? Theme.hover : "transparent" }
+    }
+    readonly property string mod: Qt.platform.os === "osx" ? "⌘" : "Ctrl+"
+    Menu {
+        id: contextMenu
+        padding: 6
+        background: Rectangle { implicitWidth: 270; radius: 12; color: Theme.coreRaised; border.color: Theme.shellLine }
+        MenuRow { text: "Копировать"; keys: root.mod + "C"; enabled: root.hasSelection; onTriggered: root.copySelection() }
+        MenuRow { text: "Выделить всё"; keys: root.mod + "A"; enabled: list.count > 0; onTriggered: root.selectAll() }
+        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.hairline } }
+        MenuRow { text: "Скопировать весь разговор"; enabled: list.count > 0; onTriggered: root.copyAllRequested() }
+    }
+
     // ---------- строки ----------
 
     Component {
@@ -65,6 +211,8 @@ Item {
             readonly property color tint: Theme.speakerColor(parent.colorIndex)
             readonly property bool showHeader: parent.first
             readonly property bool canRename: parent.colorIndex >= 0 && !partial   // «Я» и недосказанное не переименовываем
+            property alias body: body
+            property alias header: header
             width: parent.width
             implicitHeight: body.implicitHeight + (showHeader ? header.height + 18 : 6)
 
@@ -131,13 +279,20 @@ Item {
                 width: Math.min(speech.width - x - 26, 900)   // на широком экране строки не тянутся на полтора метра
                 text: speech.parent.text + (speech.partial ? " " : "")
                 readOnly: true
-                selectByMouse: true
+                selectByMouse: false        // мышью выделяет вся лента сразу (selector ниже), а не каждая реплика отдельно
+                activeFocusOnPress: false
+                persistentSelection: true
                 wrapMode: TextEdit.Wrap
                 font.pixelSize: Theme.fontBody
                 font.italic: speech.partial
                 color: speech.partial ? Theme.textTertiary : Theme.text
-                selectionColor: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
+                selectionColor: root.selectionTint
                 selectedTextColor: Theme.text
+                readonly property var range: root.rangeFor(speech.parent.index, length)
+                function applyRange() { if (range[1] > range[0]) select(range[0], range[1]); else deselect() }
+                onRangeChanged: applyRange()
+                Component.onCompleted: applyRange()
+                HoverHandler { cursorShape: Qt.IBeamCursor }
                 Rectangle {   // курсор недосказанной фразы
                     visible: speech.partial
                     width: 2; height: 15; radius: 1
@@ -162,6 +317,7 @@ Item {
             readonly property Item row: parent
             width: parent.width
             implicitHeight: 44
+            Rectangle { anchors.fill: parent; anchors.leftMargin: 50; anchors.rightMargin: 20; radius: 8; color: root.selectionTint; visible: root.rowSelected(markItem.row.index) }
             Accessible.role: Accessible.StaticText
             Accessible.name: "Отметка " + row.time + ": " + row.text
             Rectangle {
@@ -190,6 +346,7 @@ Item {
             readonly property Item row: parent
             width: parent.width
             implicitHeight: 40
+            Rectangle { anchors.fill: parent; anchors.leftMargin: 50; anchors.rightMargin: 20; radius: 8; color: root.selectionTint; visible: root.rowSelected(noteItem.row.index) }
             Rectangle { anchors.verticalCenter: parent.verticalCenter; x: 60; width: (parent.width - noteText.implicitWidth) / 2 - 76; height: 1; color: Theme.hairline }
             Text {
                 id: noteText

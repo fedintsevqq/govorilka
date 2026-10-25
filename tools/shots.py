@@ -13,7 +13,7 @@ os.environ.setdefault("GOVORILKA_DATA_DIR", tempfile.mkdtemp(prefix="govorilka-s
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QMetaObject, QObject, Qt, QTimer
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt, QTimer
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
@@ -109,6 +109,15 @@ def main(out: Path) -> None:
     steps.append(lambda: shoot(backend, root, out / "1-idle.png"))
     steps.append(lambda: (populate(True), None)[1])
     steps.append(lambda: shoot(backend, root, out / "2-recording.png"))
+    def select_and_menu() -> None:
+        feed = root.findChild(QObject, "feed")
+        for key, value in {"aRow": 1, "aPos": 9, "bRow": 3, "bPos": 25}.items():
+            feed.setProperty(key, value)
+        QMetaObject.invokeMethod(feed, "openMenu", Qt.ConnectionType.DirectConnection, Q_ARG("QVariant", 520), Q_ARG("QVariant", 300))
+
+    steps.append(select_and_menu)
+    steps.append(lambda: shoot(backend, root, out / "5-selection.png"))
+    steps.append(lambda: invoke("feed", "clearSelection"))
     steps.append(lambda: invoke("settings", "open"))
     steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings.png"))
     steps.append(lambda: (root.findChild(QObject, "settings").close(), invoke("radial", "dismiss"))[1])

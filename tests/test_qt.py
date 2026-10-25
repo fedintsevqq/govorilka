@@ -891,3 +891,91 @@ def test_install_update_falls_back_to_browser_when_not_installable(backend, monk
     monkeypatch.setattr(backend, "downloadUpdate", lambda: opened.append(1))
     backend.installUpdate()
     assert opened and not backend.installing
+
+
+# ---------- выделение текста в ленте ----------
+
+
+def test_selection_text_is_a_fragment_inside_one_line_and_labelled_lines_across_several():
+    model = TranscriptModel()
+    model.update([speech("Я", 1, "Первая фраза про сроки"), Utterance("", 3, "Важное", 3, SOURCE_MARK), speech("Собеседник 1", 5, "Вторая фраза")], [])
+    assert model.selection_text(0, 7, 0, 12) == "фраза"
+    assert model.selection_text(2, 6, 0, 7) == "[00:01] Я: фраза про сроки\n[00:03] ★ Важное\n[00:05] Собеседник 1: Вторая"  # тянули снизу вверх
+    assert model.selection_text(0, 0, 9, 10**6).endswith("Собеседник 1: Вторая фраза")  # «до конца» за краем ленты
+    assert TranscriptModel().selection_text(0, 0, 1, 1) == ""
+
+
+@pytest.fixture
+def feed(qapp):
+    """Настоящая лента TranscriptView в окне: протягиваем мышью и жмём Ctrl+C, как человек."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQml import QQmlComponent, QQmlEngine
+
+    from govorilka.config import QML_DIR
+
+    model = TranscriptModel()
+    model.update([speech("Я", 1, "Первая фраза про проект и сроки"), speech("Собеседник 1", 5, "Вторая фраза от собеседника")], [])
+    engine = QQmlEngine()
+    engine.addImportPath(str(QML_DIR))
+    engine.rootContext().setContextProperty("feedModel", model)
+    component = QQmlComponent(engine)
+    component.setData(
+        f'import QtQuick\nimport QtQuick.Window\nimport "{QUrl.fromLocalFile(str(QML_DIR)).toString()}"\n'
+        'Window { width: 700; height: 500; visible: true\n'
+        '  property var copied: []\n'
+        '  TranscriptView { objectName: "feed"; anchors.fill: parent; model: feedModel\n'
+        '    onCopyRequested: (a, b, c, d) => copied = [a, b, c, d] } }'.encode(),
+        QUrl.fromLocalFile(str(QML_DIR / "feed_test.qml")),
+    )
+    window = component.create()
+    assert window is not None, component.errorString()
+    pump(qapp, lambda: False, timeout=0.5)
+    yield window, model
+    window.close()
+    window.deleteLater()
+
+
+def bodies(window):
+    def walk(item):
+        yield item
+        for child in item.childItems():
+            yield from walk(child)
+
+    return [i for i in walk(window.contentItem()) if i.metaObject().className().startswith("QQuickTextEdit")]
+
+
+def test_dragging_selects_across_replies_and_ctrl_c_copies_them(feed, qapp):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtTest import QTest
+
+    window, model = feed
+    first, second = bodies(window)[:2]
+    start, end = first.mapToScene(QPointF(60, 8)), second.mapToScene(QPointF(40, 8))
+    QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(start.x()), int(start.y())))
+    for step in range(1, 13):
+        y = start.y() + (end.y() - start.y()) * step / 12
+        x = start.x() + (end.x() - start.x()) * step / 12
+        QTest.mouseMove(window, QPoint(int(x), int(y)), 10)
+    QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(end.x()), int(end.y())))
+    pump(qapp, lambda: False, timeout=0.1)
+    assert first.property("selectedText") and second.property("selectedText")  # подсвечены обе реплики
+    QTest.keyClick(window, Qt.Key_C, Qt.ControlModifier if sys.platform != "darwin" else Qt.MetaModifier)
+    assert pump(qapp, lambda: bool(window.property("copied").toVariant()))
+    text = model.selection_text(*[int(v) for v in window.property("copied").toVariant()])
+    assert text.startswith("[00:01] Я: ") and "\n[00:05] Собеседник 1: Вт" in text
+
+
+def test_click_clears_the_selection_and_ctrl_a_selects_everything(feed, qapp):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtTest import QTest
+
+    window, _ = feed
+    first, second = bodies(window)[:2]
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(first.mapToScene(QPointF(10, 8)).x()), int(first.mapToScene(QPointF(10, 8)).y())))
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier if sys.platform != "darwin" else Qt.MetaModifier)
+    pump(qapp, lambda: False, timeout=0.1)
+    assert first.property("selectedText") == first.property("text") and second.property("selectedText") == second.property("text")
+    point = first.mapToScene(QPointF(30, 8))
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(point.x()), int(point.y())))
+    pump(qapp, lambda: False, timeout=0.1)
+    assert not first.property("selectedText") and not second.property("selectedText")

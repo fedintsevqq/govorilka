@@ -166,3 +166,43 @@ class TranscriptModel(QAbstractListModel):
     @property
     def rows(self) -> list[Row]:
         return list(self._rows)
+
+    def selection_text(self, start_row: int, start_pos: int, end_row: int, end_pos: int) -> str:
+        """Текст выделения в ленте: от символа start_pos строки start_row до символа end_pos строки end_row.
+
+        Внутри одной реплики — сам кусок текста. Через несколько строк — по строке на реплику, с временем и говорящим,
+        как в «Скопировать весь разговор»: иначе в чате не понять, кто что сказал.
+        """
+        if not self._rows:
+            return ""
+        last = len(self._rows) - 1
+        start_row, end_row = max(0, min(start_row, last)), max(0, min(end_row, last))
+        if (end_row, end_pos) < (start_row, start_pos):
+            start_row, start_pos, end_row, end_pos = end_row, end_pos, start_row, start_pos
+        if start_row == end_row:
+            row = self._rows[start_row]
+            return row.text[max(0, start_pos):max(0, end_pos)] if row.kind in ("speech", "partial") else row_line(row)
+        lines = []
+        for number in range(start_row, end_row + 1):
+            row = self._rows[number]
+            if row.kind not in ("speech", "partial"):
+                lines.append(row_line(row))
+                continue
+            text = row.text
+            if number == start_row:
+                text = text[max(0, start_pos):]
+            if number == end_row:
+                text = text[:max(0, end_pos)]
+            if text.strip():
+                lines.append(row_line(row, text.strip()))
+        return "\n".join(lines)
+
+
+def row_line(row: Row, text: str | None = None) -> str:
+    """Строка ленты в том же виде, что и в скопированном разговоре: «[00:05] Собеседник 1: текст»."""
+    body = row.text if text is None else text
+    if row.kind == "mark":
+        return f"[{row.time}] ★ {body}"
+    if row.kind == "note":
+        return f"[{row.time}] {body}"
+    return f"[{row.time}] {row.speaker}: {body}"

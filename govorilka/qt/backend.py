@@ -601,6 +601,14 @@ class Backend(QObject):
         if not self.controller.open_transcript():
             self.toast.emit("Транскрипта пока нет", "info")
 
+    @Slot(int, int, int, int)
+    @safe_slot
+    def copySelection(self, start_row: int, start_pos: int, end_row: int, end_pos: int) -> None:  # noqa: N802
+        """Ctrl+C (⌘C) или «Копировать» в ленте: выделенный мышью текст в буфер обмена."""
+        text = self._model.selection_text(start_row, start_pos, end_row, end_pos)
+        if text:
+            QGuiApplication.clipboard().setText(text)
+
     @Slot()
     @safe_slot
     def copyTranscript(self) -> None:  # noqa: N802

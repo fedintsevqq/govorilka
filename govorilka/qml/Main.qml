@@ -512,12 +512,15 @@ ApplicationWindow {
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.hairline }
 
                 TranscriptView {
+                    objectName: "feed"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     model: backend.transcript
                     hotkeyLabel: window.opts.hotkey_enabled ? String(window.opts.hotkeyLabel) : ""
                     recording: window.live
                     onRenameRequested: (voiceId, name, tint) => renameSheet.ask(voiceId, name, tint)
+                    onCopyRequested: (startRow, startPos, endRow, endPos) => backend.copySelection(startRow, startPos, endRow, endPos)
+                    onCopyAllRequested: backend.copyTranscript()
                 }
             }
         }
