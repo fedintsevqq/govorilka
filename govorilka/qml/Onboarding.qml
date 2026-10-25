@@ -140,7 +140,8 @@ Popup {
             PillButton {
                 id: primary
                 variant: "primary"
-                text: tour.step === 0 ? "Покажите" : tour.step === tour.steps - 1 ? "Всё понятно" : "Дальше"
+                text: tour.step === 0 ? "Покажите" : tour.step === tour.steps - 1 ? "Всё понятно" : (tour.key === "access" && accessDone ? "Готово, дальше" : "Дальше")
+                readonly property bool accessDone: backend.access.length > 0 && backend.access.every(row => row.granted === true)
                 iconName: tour.step === tour.steps - 1 ? "check" : "chevron"
                 tip: tour.step === tour.steps - 1 ? "Закрыть знакомство. Открыть снова можно в настройках" : "Следующий шаг (стрелка вправо или Enter)"
                 onClicked: tour.next()
@@ -219,9 +220,9 @@ Popup {
 
     // Разрешения macOS (только на Mac)
     component PageAccess: Page {
-        artMax: 270
+        artMax: 290
         title: "Сначала разрешите доступ"
-        body: "macOS просит подтвердить каждый доступ один раз. Нажмите «Разрешить» у красных строк: откроется нужный раздел настроек, останется включить переключатель."
+        body: "macOS просит подтвердить каждый доступ один раз. «Разрешить» покажет запрос или откроет нужный раздел настроек: включите там Говорилку и вернитесь — строка станет зелёной."
         AccessRows {
             anchors.fill: parent
             compact: true
@@ -231,7 +232,7 @@ Popup {
     // 1. Что это
     component Page0: Page {
         title: "Говорилка записывает созвоны и сразу превращает их в текст"
-        body: "Ваш голос и голоса собеседников идут отдельно. Всё распознаётся на этом компьютере, в интернет ничего не уходит. Текст сохраняется в файл, пока вы говорите."
+        body: "Ваш голос и голоса собеседников идут отдельно. Всё распознаётся на этом компьютере. <b>При первом запуске Говорилка один раз скачает модели распознавания</b> (около 880 МБ): в шапке окна появится кольцо с процентами. Дальше интернет не нужен."
         Row {
             anchors.centerIn: parent
             spacing: 18

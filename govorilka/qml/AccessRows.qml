@@ -8,12 +8,39 @@ ColumnLayout {
     id: rows
     spacing: 8
     property bool compact: false   // в знакомстве места меньше
+    readonly property int missing: backend.access.filter(row => row.granted !== true).length
+    readonly property bool allGranted: backend.access.length > 0 && missing === 0
 
     Timer {   // человек включает переключатель в Системных настройках — статус обновляется сам
         interval: 1500
         repeat: true
         running: rows.visible && backend.accessAvailable
         onTriggered: backend.refreshAccess()
+    }
+
+    // итог сверху: сколько осталось, а когда всё зелёное — «Всё готово»
+    Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: 34
+        radius: 12
+        readonly property color tint: rows.allGranted ? Theme.success : Theme.accent
+        color: Qt.rgba(tint.r, tint.g, tint.b, Theme.dark ? 0.14 : 0.10)
+        border.color: Qt.rgba(tint.r, tint.g, tint.b, 0.35)
+        Row {
+            anchors.centerIn: parent
+            spacing: 8
+            Icon { name: rows.allGranted ? "check" : "bolt"; size: 15; color: parent.parent.tint; anchors.verticalCenter: parent.verticalCenter }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: rows.allGranted ? "Всё готово: все разрешения выданы"
+                    : "Осталось разрешить: " + rows.missing + " из " + backend.access.length + ". Нажмите «Разрешить», включите Говорилку и вернитесь сюда"
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                color: Theme.text
+            }
+        }
+        Accessible.role: Accessible.StaticText
+        Accessible.name: rows.allGranted ? "Все разрешения выданы" : "Осталось разрешить: " + rows.missing
     }
 
     Repeater {

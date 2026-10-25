@@ -95,6 +95,7 @@ def run(background: bool = False) -> int:
 
     backend.start()
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.flush_startup_notices)
+    QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.controller.prefetch_models)  # первый запуск: модели качаются сразу
     app.aboutToQuit.connect(lambda: (backend.shutdown(), tray.hide() if tray else None, lock.close()))
     code = app.exec()
     del engine

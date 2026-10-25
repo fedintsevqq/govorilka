@@ -17,10 +17,14 @@ class Engines:
     speakers: SpeakerModel
 
 
+LOADING = "Загружаю модели в память…"
+
+
 def load_engines(model_name: str, on_status: models.StatusCallback, previous: Engines | None = None) -> Engines:
     """Грузит то, чего ещё нет. При смене модели распознавания детектор и голоса не перегружаются."""
     if previous and previous.recognizer.model_name == model_name:
         return previous
+    on_status(LOADING)
     try:
         vad = previous.vad if previous else SileroModel(on_status)
         speakers = previous.speakers if previous else SpeakerModel(on_status)

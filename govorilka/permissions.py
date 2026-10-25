@@ -44,8 +44,7 @@ ACCESS_ROWS = (
     ("microphone", "Microphone", "Микрофон", "ваш голос — реплики «Я»"),
     ("screen", "ScreenCapture", "Запись экрана и системного звука", "голоса собеседников из Zoom, Teams, браузера"),
     ("input", "ListenEvent", "Мониторинг ввода", "горячая клавиша из любой программы"),
-    ("accessibility", "Accessibility", "Универсальный доступ", "вставка разговора в чат нейросети"),
-    ("automation", "Automation", "Автоматизация", "узнать, какой чат открыт, и вставить в него разговор"),
+    ("accessibility", "Accessibility", "Универсальный доступ", "вставка разговора в поле ввода чата нейросети"),
 )
 
 CORE_GRAPHICS = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
@@ -140,7 +139,6 @@ def access_status() -> dict[str, bool | None]:
         "screen": _call_bool(CORE_GRAPHICS, "CGPreflightScreenCaptureAccess"),
         "input": input_monitoring_status(),
         "accessibility": _call_bool(APPLICATION_SERVICES, "AXIsProcessTrusted"),
-        "automation": decode_automation(_automation_code()),
     }
 
 

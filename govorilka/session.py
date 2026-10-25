@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 WATCH_EVERY_S = 2.0
 QUEUE_WARN_AT = 400  # из 600 кусков по 0.1 с, то есть примерно 40 секунд отставания
 RETRY_AFTER_S = 10.0  # как часто пробовать вернуть упавшее устройство, если выбор в системе не менялся
+PERMISSION_RETRY_S = 60.0  # нет доступа — пробуем реже: каждый запуск помощника мог бы дёргать человека
+MIC_SILENT_WARN_S = 20.0  # микрофон столько отдаёт только нули — говорим об этом
+WATCHER_JOIN_S = 5.0
 
 
 @dataclass
@@ -64,6 +67,8 @@ class Session:
         self._audio: AudioSystem | None = AudioSystem()
         self._sources: list[_Source] = []
         self._signature = AudioSystem.default_signature()
+        self._retry_after = RETRY_AFTER_S
+        self._mic_silent_warned = False
         self._watch_stop = threading.Event()
         self._watcher: threading.Thread | None = None
         self._device_lock = threading.Lock()  # переподключение и остановка не должны пересекаться
@@ -76,6 +81,12 @@ class Session:
         self._last_notice = ""
         self._lock = threading.Lock()
         self.device_names: list[str] = []
+        self._link_cancel()
+
+    def _link_cancel(self) -> None:
+        """Mac: помощник захвата, который ещё запускается, бросит ждать, как только запись остановят."""
+        if self._audio is not None and hasattr(self._audio, "cancel"):
+            self._audio.cancel = self._watch_stop
 
     @property
     def path(self) -> Path:
@@ -141,6 +152,7 @@ class Session:
         """Открывает то, что ещё не открыто. Сбой одного источника не мешает другому."""
         if self._audio is None:
             self._audio = AudioSystem()
+            self._link_cancel()
         errors = []
         for source in self._sources:
             if source.capture is not None:
@@ -186,9 +198,28 @@ class Session:
             self._signature = signature
             self._reconnect(full=True, reason="сменилось устройство")
             return
-        broken = any(s.capture is None or not s.capture.is_alive() for s in self._sources)
-        if broken and time.monotonic() - self._last_retry >= RETRY_AFTER_S:
+        broken = [s for s in self._sources if s.capture is None or not s.capture.is_alive()]
+        denied = next((getattr(s.capture, "permission_error", None) for s in broken if getattr(s.capture, "permission_error", None)), None)
+        if denied is not None:
+            # доступ отозван или устарел (после переустановки): объясняем один раз и пробуем реже, без запросов
+            self._retry_after = PERMISSION_RETRY_S
+            self._notify(str(denied))
+        if broken and time.monotonic() - self._last_retry >= self._retry_after:
             self._reconnect(full=False, reason="устройство пропало")  # исправные источники не трогаем
+        self._check_silent_mic()
+
+    def _check_silent_mic(self) -> None:
+        """Микрофон жив, но отдаёт одни нули (AirPods в неверном режиме, выключенный вход) — иначе это незаметно:
+        ни ошибки, ни текста."""
+        for source in self._sources:
+            silent_for = getattr(source.capture, "silent_for", None)
+            if source.name != SOURCE_MIC or silent_for is None or self.paused:
+                continue
+            if silent_for() >= MIC_SILENT_WARN_S and not self._mic_silent_warned:
+                self._mic_silent_warned = True
+                self._notify("Микрофон молчит: звука нет уже 20 секунд. Проверьте устройство ввода (AirPods?) в настройках звука системы")
+            elif silent_for() < 1.0:
+                self._mic_silent_warned = False
 
     def _reconnect(self, full: bool, reason: str) -> None:
         with self._device_lock:
@@ -205,6 +236,8 @@ class Session:
             except Exception as exc:  # например, не поднялась звуковая система
                 log.exception("Не удалось переподключить устройства")
                 errors = [("", AudioError(str(exc)))]
+        if not errors:
+            self._retry_after = RETRY_AFTER_S
         if errors:
             self._notify(f"Запись: {reason}, устройство пока недоступно ({'; '.join(f'{speaker}: {exc}' if speaker else str(exc) for speaker, exc in errors)}). Пробую снова…")
         else:
@@ -316,7 +349,7 @@ class Session:
     def stop(self) -> Path | None:
         self._watch_stop.set()
         if self._watcher and self._watcher is not threading.current_thread():
-            self._watcher.join()
+            self._watcher.join(timeout=WATCHER_JOIN_S)  # помощник мог запускаться: он сам увидит отмену
         with self._device_lock:
             if self._closed:
                 return self.saver.path

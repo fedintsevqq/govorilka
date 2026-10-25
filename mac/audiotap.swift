@@ -1,14 +1,19 @@
 // Помощник Говорилки для macOS.
 //   --source system  весь системный звук через ScreenCaptureKit (по умолчанию)
 //   --source mic     микрофон по умолчанию через AVAudioEngine, со сменой устройства на лету
-// stdout — сырой float32 моно 48 кГц, stderr — служебные строки: "ready", "error: ...", прочее — в лог.
-// Завершается, когда закрывается stdin (родительский процесс остановил запись или упал).
+//   --prompt         показать системный запрос на запись экрана, если доступа нет (только при старте записи
+//                    по нажатию, не при переподключении: иначе запрос всплывал бы каждые десять секунд)
+// stdout — сырой float32 моно 48 кГц, stderr — служебные строки: "ready", "error: ...", "waiting: permission",
+// прочее — в лог. Завершается, когда закрывается stdin (родительский процесс остановил запись или упал).
 
 import AVFoundation
 import CoreGraphics
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
+
+// Говорилка закрыла трубу (остановила запись) — не падаем от SIGPIPE посреди записи, а выходим по EOF stdin.
+signal(SIGPIPE, SIG_IGN)
 
 let sampleRate = 48_000
 let reconnectAttempts = 10  // ~5 секунд на переключение AirPods между режимами
@@ -18,10 +23,27 @@ func report(_ line: String) {
     FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
 }
 
+let arguments = CommandLine.arguments
+let source = arguments.firstIndex(of: "--source").flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil } ?? "system"
+let mayPrompt = arguments.contains("--prompt")
+
+/// Ошибка запуска системного звука строкой для Говорилки: отказ в доступе помечаем "permission: screen:",
+/// чтобы приложение показало подсказку про разрешение, а не «устройство недоступно».
+func describeSystemFailure(_ error: Error) -> String {
+    let code = (error as NSError).code
+    // -3801 — SCStreamError.userDeclined; запасной признак — система сама говорит, что доступа к записи нет
+    if code == -3801 || !CGPreflightScreenCaptureAccess() {
+        return "permission: screen: \(error.localizedDescription) (code \(code))"
+    }
+    return "\(error.localizedDescription) (code \(code))"
+}
+
 final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private let output = FileHandle.standardOutput
     private let audioQueue = DispatchQueue(label: "govorilka.audiotap")
+    private let lock = NSLock()
+    private var reconnecting = false
 
     func start() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -45,7 +67,11 @@ final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
         // кадры экрана принимаем и выбрасываем, иначе ScreenCaptureKit сыплет предупреждениями
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "govorilka.screen"))
         try await stream.startCapture()
+        lock.lock()
+        let previous = self.stream
         self.stream = stream
+        lock.unlock()
+        if let previous { try? await previous.stopCapture() }  // старый поток не должен писать вперемешку с новым
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -69,8 +95,13 @@ final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
     // Подключили или сменили наушники — macOS может остановить поток системного звука. Вместо выхода
     // переподключаемся сами: иначе Говорилка молча теряет звук собеседников до следующего ручного переподключения.
     func stream(_ stream: SCStream, didStopWithError error: Error) {
+        lock.lock()
+        let alreadyReconnecting = reconnecting
+        reconnecting = true
+        if self.stream === stream { self.stream = nil }
+        lock.unlock()
+        if alreadyReconnecting { return }  // второе уведомление о той же остановке — цепочка уже идёт
         report("system audio stream stopped, reconnecting: \(error.localizedDescription)")
-        self.stream = nil
         reconnect(attempt: 1)
     }
 
@@ -78,13 +109,16 @@ final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
         Task {
             do {
                 try await self.start()
+                self.lock.lock()
+                self.reconnecting = false
+                self.lock.unlock()
                 report("device changed")
             } catch {
                 if attempt < reconnectAttempts {
                     try? await Task.sleep(nanoseconds: reconnectDelayNs)
                     reconnect(attempt: attempt + 1)
                 } else {
-                    report("error: поток остановлен: \(error.localizedDescription)")
+                    report("error: \(describeSystemFailure(error))")
                     exit(2)
                 }
             }
@@ -94,45 +128,72 @@ final class SystemTap: NSObject, SCStreamOutput, SCStreamDelegate {
 
 /// Микрофон: AVAudioEngine с переводом в моно 48 кГц.
 /// При смене устройства (AirPods, внешний микрофон) движок присылает уведомление — перезапускаемся.
+/// Формат входа меняется на лету (AirPods в режиме гарнитуры дают 16–24 кГц вместо 48), поэтому подписку на звук
+/// ставим в «родном» формате узла (format: nil), а переводчик формата пересоздаём, как только он поменялся.
 final class MicTap {
     private let engine = AVAudioEngine()
     private let output = FileHandle.standardOutput
     private let outFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false
     )!
+    // переводчик и его формат трогает только поток звука (write): без гонки с перезапуском
     private var converter: AVAudioConverter?
+    private var converterFormat: AVAudioFormat?
     private var observer: NSObjectProtocol?
+    private var restarting = false  // уведомлений о смене устройства бывает несколько подряд: одна цепочка перезапуска
 
-    func start() throws {
+    private func startEngine() throws {
         let input = engine.inputNode
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
             throw NSError(domain: "audiotap", code: 2, userInfo: [NSLocalizedDescriptionKey: "микрофон не найден"])
         }
-        guard let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
-            throw NSError(domain: "audiotap", code: 3, userInfo: [NSLocalizedDescriptionKey: "неподдерживаемый формат микрофона"])
-        }
-        converter.downmix = true
-        self.converter = converter
-        input.installTap(onBus: 0, bufferSize: 4800, format: inFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4800, format: nil) { [weak self] buffer, _ in
             self?.write(buffer)
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw error
+        }
         if observer == nil {
             observer = NotificationCenter.default.addObserver(
                 forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-            ) { [weak self] _ in self?.restart() }
+            ) { [weak self] _ in self?.deviceChanged() }
         }
+    }
+
+    /// Первый запуск тоже с повторами: AirPods, подключённые за секунду до записи, ещё переключаются между режимами.
+    func start(attempt: Int = 1, onReady: @escaping () -> Void) {
+        do {
+            try startEngine()
+            onReady()
+        } catch {
+            if attempt < reconnectAttempts {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.start(attempt: attempt + 1, onReady: onReady) }
+            } else {
+                report("error: микрофон не запустился: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
+    }
+
+    private func deviceChanged() {
+        if restarting { return }
+        restarting = true
+        restart(attempt: 1)
     }
 
     /// Пока AirPods переключаются между режимами (наушники и микрофон), вход на короткое время без формата.
     /// Тогда пробуем снова через полсекунды, а не выходим: выход оставил бы Говорилку без микрофона.
-    private func restart(attempt: Int = 1) {
+    private func restart(attempt: Int) {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         do {
-            try start()
+            try startEngine()
+            restarting = false
             report("device changed")
         } catch {
             if attempt < reconnectAttempts {
@@ -145,6 +206,12 @@ final class MicTap {
     }
 
     private func write(_ buffer: AVAudioPCMBuffer) {
+        if converterFormat == nil || buffer.format != converterFormat! {
+            guard let fresh = AVAudioConverter(from: buffer.format, to: outFormat) else { return }
+            fresh.downmix = true
+            converter = fresh
+            converterFormat = buffer.format
+        }
         guard let converter else { return }
         let ratio = outFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
@@ -165,35 +232,21 @@ final class MicTap {
     }
 }
 
-let arguments = CommandLine.arguments
-let source = arguments.firstIndex(of: "--source").flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil } ?? "system"
-
 // держим ссылки до конца процесса
 let systemTap = SystemTap()
 let micTap = MicTap()
 
-/// Приложение показывает разные сообщения для «нет разрешения» и для остальных сбоев, поэтому различаем их здесь.
-/// Строка "error: permission: <служба>: подробности" означает отказ в доступе, всё прочее — другую причину.
 func failSystem(_ error: Error) -> Never {
-    let code = (error as NSError).code
-    // -3801 — SCStreamError.userDeclined; запасной признак — система сама говорит, что доступа к записи нет
-    if code == -3801 || !CGPreflightScreenCaptureAccess() {
+    let description = describeSystemFailure(error)
+    if description.hasPrefix("permission:") && mayPrompt {
         _ = CGRequestScreenCaptureAccess()  // показывает системный запрос и вносит приложение в список настроек
-        report("error: permission: screen: \(error.localizedDescription) (code \(code))")
-    } else {
-        report("error: \(error.localizedDescription) (code \(code))")
     }
+    report("error: \(description)")
     exit(1)
 }
 
 func startMic() {
-    do {
-        try micTap.start()
-        report("ready")
-    } catch {
-        report("error: \(error.localizedDescription)")
-        exit(1)
-    }
+    micTap.start(onReady: { report("ready") })
 }
 
 switch source {
@@ -205,6 +258,7 @@ case "mic":
             report("error: permission: microphone: доступ запрещён в настройках")
             exit(1)
         case .notDetermined:
+            report("waiting: permission")  // человек читает системный запрос: Говорилка подождёт дольше обычного
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 DispatchQueue.main.async {
                     if granted {
@@ -220,6 +274,9 @@ case "mic":
         }
     }
 case "system":
+    if mayPrompt && !CGPreflightScreenCaptureAccess() {
+        report("waiting: permission")
+    }
     Task {
         do {
             try await systemTap.start()
@@ -239,5 +296,4 @@ DispatchQueue.global().async {
     exit(0)
 }
 
-signal(SIGPIPE, SIG_IGN)
 dispatchMain()

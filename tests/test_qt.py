@@ -608,7 +608,7 @@ def test_mac_overlay_never_breaks_the_app():
 def test_access_rows_are_empty_outside_macos_and_know_all_four_permissions(backend, qapp):
     from govorilka import permissions
 
-    assert [row[0] for row in permissions.ACCESS_ROWS] == ["microphone", "screen", "input", "accessibility", "automation"]
+    assert [row[0] for row in permissions.ACCESS_ROWS] == ["microphone", "screen", "input", "accessibility"]
     if sys.platform != "darwin":
         assert backend.access == [] and backend.accessAvailable is False
         assert set(permissions.access_status().values()) == {None}
@@ -671,3 +671,32 @@ def test_allow_button_asks_first_then_opens_the_pane_only_if_still_not_granted(b
     assert opened == []  # разрешили в ответ на запрос: раздел настроек открывать не нужно
     backend.requestAccess("нет-такого")  # неизвестная служба игнорируется
     assert "нет-такого" not in asked
+
+
+def test_loading_indicator_follows_the_download_status(backend, qapp):
+    states = []
+    backend.loadChanged.connect(lambda: states.append((backend.loading, round(backend.loadFraction, 2))))
+    backend._set_status("Скачиваю модель распознавания: 120 из 852 МБ (14%)")
+    assert backend.loading is True and backend.loadFraction == 0.14
+    backend._set_status("Скачиваю детектор речи: 1 МБ…")  # размер неизвестен — кольцо крутится
+    assert backend.loading is True and backend.loadFraction == -1.0
+    from govorilka.engines import LOADING
+
+    backend._set_status(LOADING)
+    assert backend.loading is True and backend.loadFraction == -1.0
+    backend._set_status("Модели готовы")
+    assert backend.loading is False
+    assert states[0] == (True, 0.14) and states[-1] == (False, -1.0)
+
+
+def test_prefetch_downloads_only_missing_models_smallest_first(monkeypatch):
+    from govorilka import models
+
+    downloaded = {"silero"}
+    monkeypatch.setattr(models, "is_downloaded", lambda kind, name: name in downloaded)
+    assert [label for _k, _n, label in models.missing("gigaam-v3-e2e-rnnt")] == ["модель голосов", "модель распознавания"]
+    order, statuses = [], []
+    monkeypatch.setattr(models, "_download", lambda kind, name, label, on_status: order.append(kind) or downloaded.add(name))
+    assert models.prefetch("gigaam-v3-e2e-rnnt", statuses.append) is True
+    assert order == ["se", "asr"] and statuses[-1] == models.DOWNLOADED
+    assert models.prefetch("gigaam-v3-e2e-rnnt", statuses.append) is False  # всё уже скачано: ничего не делаем

@@ -88,10 +88,39 @@ def format_progress(label: str, done: int, total: int | None) -> str:
     return f"Скачиваю {label}: {done // MB} МБ…"
 
 
+_download_lock = threading.Lock()  # фоновое скачивание при запуске и запись не должны качать один файл дважды
+
+
 def ensure_downloaded(kind: str, name: str, label: str, on_status: StatusCallback) -> None:
     """Скачивает модель, если её ещё нет, и по ходу сообщает процент."""
     if is_downloaded(kind, name):
         return
+    with _download_lock:
+        if is_downloaded(kind, name):  # пока ждали замок, модель докачал другой поток
+            return
+        _download(kind, name, label, on_status)
+
+
+def missing(model_name: str) -> list[tuple[str, str, str]]:
+    """Каких моделей ещё нет на диске: (вид, имя, как назвать человеку). Маленькие первыми."""
+    wanted = [("vad", VAD_NAME, "детектор речи"), ("se", SPEAKER_REPO, "модель голосов"), ("asr", model_name, "модель распознавания")]
+    return [item for item in wanted if not is_downloaded(item[0], item[1])]
+
+
+def prefetch(model_name: str, on_status: StatusCallback) -> bool:
+    """Докачивает всё недостающее заранее, при первом запуске, а не при первом нажатии записи. True — что-то качали."""
+    todo = missing(model_name)
+    for kind, name, label in todo:
+        ensure_downloaded(kind, name, label, on_status)
+    if todo:
+        on_status(DOWNLOADED)
+    return bool(todo)
+
+
+DOWNLOADED = "Модели скачаны: дальше Говорилка работает без интернета"
+
+
+def _download(kind: str, name: str, label: str, on_status: StatusCallback) -> None:
     resolver = _resolver(kind, name, offline=False)
     folder = local_dir(name)
     folder.mkdir(parents=True, exist_ok=True)

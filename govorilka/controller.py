@@ -22,7 +22,7 @@ from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
 from urllib.parse import quote
 
-from govorilka import ai, desktop_apps
+from govorilka import ai, desktop_apps, models
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
@@ -111,6 +111,18 @@ class Controller:
 
     def start(self) -> None:
         self.hotkeys.start()
+
+    def prefetch_models(self) -> None:
+        """Первый запуск: модели (около 880 МБ) качаются сразу в фоне, а не при первом нажатии записи."""
+        def work() -> None:
+            try:
+                models.prefetch(self.settings.model, self.listener.on_status)
+            except Exception as exc:  # noqa: BLE001 — не скачалось сейчас: докачаем при первой записи
+                log.warning("Не скачал модели заранее: %s", exc)
+                self.listener.on_status(f"Не скачал модели заранее ({exc}). Докачаю при первой записи")
+
+        if models.missing(self.settings.model):
+            threading.Thread(target=work, name="prefetch-models", daemon=True).start()
 
     def startup_notices(self) -> list[str]:
         """Что стоит сказать при запуске: нет разрешения, конфликт с раскладкой, старая версия рядом."""

@@ -363,12 +363,16 @@ def test_region_check_uses_the_system_certificates(monkeypatch):
     assert ai.reachable("https://gemini.google.com/") is True and seen["context"] is not None
 
 
-def test_mac_apple_events_denial_is_reported_as_missing_permission(monkeypatch):
-    from types import SimpleNamespace
+def test_mac_chat_input_is_the_widest_text_area_not_the_address_bar():
+    from govorilka.mac_ax import pick_input
 
-    from govorilka.qt import autopaste
+    nodes = [
+        ("адресная строка", "AXTextField", 900.0, "Address and search bar"),
+        ("поиск по сайту", "AXTextField", 250.0, "Search"),
+        ("поле чата", "AXTextArea", 720.0, "Message DeepSeek"),
+        ("узкое поле", "AXTextArea", 120.0, ""),
+    ]
+    assert pick_input(nodes) == "поле чата"
+    assert pick_input([("логин", "AXTextField", 280.0, "Email")]) is None  # узкое поле на странице входа — не туда
+    assert pick_input([("однострочное", "AXTextField", 640.0, "Ask anything")]) == "однострочное"
 
-    stderr = "execution error: Not authorized to send Apple events to System Events. (-1743)"
-    monkeypatch.setattr(autopaste.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr=stderr))
-    with pytest.raises(autopaste.NoPermissionError):
-        autopaste._osascript("tell application \"System Events\" to get name")

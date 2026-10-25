@@ -2,8 +2,9 @@
 
 Веб-чаты не умеют принимать длинный текст снаружи. Поэтому Говорилка кладёт разговор в буфер обмена, открывает чат
 и ждёт, пока впереди окажется окно браузера с этим чатом (по заголовку вкладки: «ChatGPT», «Gemini», «DeepSeek»…).
-Когда страница загрузилась, Говорилка ставит курсор в поле ввода чата (на Windows находит его через специальные
-возможности системы, UI Automation: не все чаты ставят курсор сами, DeepSeek например) и нажимает Ctrl+V (на Mac ⌘V).
+Когда страница загрузилась, Говорилка ставит курсор в поле ввода чата через специальные возможности системы
+(Windows — UI Automation, macOS — Accessibility API: не все чаты ставят курсор сами, DeepSeek например)
+и нажимает Ctrl+V (на Mac ⌘V).
 Enter не нажимает никогда: отправляете вы сами, посмотрев текст.
 
 Вход в аккаунт. Если вместо чата открылась страница входа («Вход — Google Аккаунты», «Log in — OpenAI»), ждём:
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import subprocess
 import sys
 import threading
 import time
@@ -144,30 +144,30 @@ def _windows_paste() -> None:
 
 # ---------- macOS ----------
 
-_MAC_TITLE = (
-    'tell application "System Events" to tell (first application process whose frontmost is true) '
-    'to if (count of windows) > 0 then get name of front window'
-)
-_MAC_PASTE = 'tell application "System Events" to keystroke "v" using command down'
-
-
-def _osascript(script: str) -> str:
-    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=5)
-    if result.returncode != 0:
-        # -1719 / -25211 / «not allowed assistive access»: нет «Универсального доступа»;
-        # -1743 «Not authorized to send Apple events»: нет «Автоматизации» (управление System Events)
-        if any(mark in result.stderr for mark in ("assistive", "-1719", "-25211", "-1743", "not authorized", "Not authorized")):
-            raise NoPermissionError(result.stderr.strip())
-        raise OSError(result.stderr.strip())
-    return result.stdout.strip()
-
-
 def _mac_title() -> str:
-    return _osascript(_MAC_TITLE)
+    """Заголовок окна впереди через специальные возможности macOS (без AppleScript и «Автоматизации»)."""
+    from govorilka import mac_ax
+
+    try:
+        return mac_ax.front_window_title()
+    except mac_ax.NotTrustedError as exc:
+        raise NoPermissionError(str(exc)) from exc
 
 
 def _mac_paste() -> None:
-    _osascript(_MAC_PASTE)
+    """Курсор в поле ввода чата, потом ⌘V. Поля не нашли — вставлять некуда (страница входа, ошибка)."""
+    from govorilka import mac_ax
+
+    try:
+        found = mac_ax.focus_chat_input()
+    except mac_ax.NotTrustedError as exc:
+        raise NoPermissionError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — поиск поля не удался: вставляем туда, где курсор (чаты обычно ставят его сами)
+        log.warning("Не искал поле ввода через специальные возможности: %s", exc)
+        found = True
+    if not found:
+        raise NoInputError("поле ввода чата не нашлось")
+    mac_ax.press_paste()
 
 
 # ---------- ожидание ----------

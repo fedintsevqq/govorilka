@@ -46,6 +46,9 @@ ApplicationWindow {
         backend.bringToFront(window)   // Windows не всегда отдаёт фокус по просьбе: дожимаем системным вызовом
     }
 
+    // вернулись из «Системных настроек» — сразу обновляем зелёные и красные кружки разрешений
+    onActiveChanged: if (active && backend.accessAvailable) backend.refreshAccess()
+
     onClosing: (close) => {
         if (backend.trayAvailable) {   // Говорилка уходит в трей и продолжает слушать горячую клавишу
             close.accepted = false
@@ -100,6 +103,34 @@ ApplicationWindow {
                 pulse: window.phase === "recording" || window.phase === "starting" || window.phase === "stopping" || window.phase === "file"
             }
 
+            Item {   // кольцо загрузки моделей: появляется, пока они качаются или грузятся в память
+                id: loadIndicator
+                visible: backend.loading
+                Layout.preferredWidth: visible ? loadRow.implicitWidth : 0
+                Layout.preferredHeight: 26
+                opacity: visible ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: Theme.base } }
+                Row {
+                    id: loadRow
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+                    LoadRing { fraction: backend.loadFraction; anchors.verticalCenter: parent.verticalCenter }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: backend.loadFraction >= 0 ? "Модели " + Math.round(backend.loadFraction * 100) + "%" : "Загружаю модели"
+                        font.pixelSize: 12
+                        font.features: { "tnum": 1 }
+                        color: Theme.textSecondary
+                    }
+                }
+                HoverHandler { id: loadHover }
+                Tip {
+                    shown: loadHover.hovered
+                    text: backend.loadFraction >= 0
+                          ? "Первый запуск: скачиваются модели распознавания речи (около 880 МБ). Это один раз, дальше всё работает без интернета"
+                          : "Модели загружаются в память: несколько секунд"
+                }
+            }
             Rectangle {   // тема созвона
                 Layout.fillWidth: true
                 Layout.leftMargin: 10

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import logging
 import math
 import sys
@@ -21,6 +22,7 @@ from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QWindow
 from govorilka.audio_base import PermissionDeniedError
 from govorilka.config import MODELS, SOURCE_MIC, SOURCE_SYSTEM, Settings
 from govorilka.controller import AppState, ClaudeResult, Controller, Listener
+from govorilka.engines import LOADING
 from govorilka.hotkeys import (
     ChordRecorder,
     Keyboard,
@@ -167,6 +169,8 @@ class Backend(QObject):
         self._capturing = False
         self._tour_active = False
         self._ai_busy = False
+        self._loading = False
+        self._load_fraction = -1.0
         self._key_watchers: set[str] = set()
         self._recorder: ChordRecorder | None = None
         self._capture_deadline = 0.0
@@ -385,7 +389,7 @@ class Backend(QObject):
         if result.target:
             autopaste.start(result.target, on_no_permission=lambda: self.toast.emit(
                 "macOS не дал вставить текст: включите Говорилку в Настройки → Конфиденциальность и безопасность → "
-                "Универсальный доступ и Автоматизация (System Events). Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
+                "Универсальный доступ. Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
         self.toast.emit(result.message, "success" if result.ok else "error")
 
     @Slot()
@@ -672,7 +676,25 @@ class Backend(QObject):
         self._tick_elapsed()
         self.stateChanged.emit()
 
+    loadChanged = Signal()  # noqa: N815
+    loading = Property(bool, lambda self: self._loading, notify=loadChanged)
+    loadFraction = Property(float, lambda self: self._load_fraction, notify=loadChanged)  # noqa: N815 — -1: неизвестно
+
+    def _track_loading(self, text: str) -> None:
+        """Скачивание и загрузка моделей — по строкам статуса: «Скачиваю …: 120 из 852 МБ (14%)», «Загружаю модели…»."""
+        loading, fraction = False, -1.0
+        if text.startswith("Скачиваю"):
+            loading = True
+            match = re.search(r"\((\d+)%\)", text)
+            fraction = int(match.group(1)) / 100 if match else -1.0
+        elif text == LOADING:
+            loading = True
+        if (loading, fraction) != (self._loading, self._load_fraction):
+            self._loading, self._load_fraction = loading, fraction
+            self.loadChanged.emit()
+
     def _set_status(self, text: str) -> None:
+        self._track_loading(text)
         self._status = text
         self.statusChanged.emit()
 
