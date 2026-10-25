@@ -185,6 +185,7 @@ jobs:
         env:
           GOVORILKA_INSTALL_DIR: ${{ runner.temp }}\govorilka-install
           GOVORILKA_NO_START: "1"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           Get-Content -Raw -Encoding UTF8 install.ps1 | Invoke-Expression
           if (-not (Test-Path "$env:GOVORILKA_INSTALL_DIR\Govorilka.exe")) { throw 'Govorilka.exe не появился' }
@@ -193,6 +194,7 @@ jobs:
         env:
           GOVORILKA_APP: ${{ runner.temp }}/Govorilka.app
           GOVORILKA_NO_OPEN: "1"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash install.sh
           test -x "$GOVORILKA_APP/Contents/MacOS/Govorilka"

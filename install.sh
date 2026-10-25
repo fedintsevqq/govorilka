@@ -24,7 +24,9 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Говорилка: ищу последнюю версию..."
-curl -fsSL -H "User-Agent: Govorilka-installer" "https://api.github.com/repos/$REPO/releases/latest" -o "$WORK/release.json"
+AUTH=()
+[[ -n "${GITHUB_TOKEN:-}" ]] && AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")  # необязательно: в CI, чтобы не упереться в лимит
+curl -fsSL -H "User-Agent: Govorilka-installer" "${AUTH[@]}" "https://api.github.com/repos/$REPO/releases/latest" -o "$WORK/release.json"
 
 # plutil понимает JSON и есть на любом Mac: без python и jq
 count=$(plutil -extract assets raw -o - "$WORK/release.json")

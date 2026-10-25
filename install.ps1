@@ -12,7 +12,9 @@ $ProgressPreference = 'SilentlyContinue'   # без полосы прогрес�
 
 $repo = 'fedintsevqq/govorilka'
 Write-Host 'Говорилка: ищу последнюю версию...'
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'Govorilka-installer' }
+$headers = @{ 'User-Agent' = 'Govorilka-installer' }
+if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $env:GITHUB_TOKEN" }  # необязательно: в CI, чтобы не упереться в лимит
+$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers $headers
 $asset = $release.assets | Where-Object { $_.name -like '*-windows-x64.exe' } | Select-Object -First 1
 if (-not $asset) { throw "В релизе $($release.tag_name) нет файла для Windows" }
 if (-not $asset.digest -or -not $asset.digest.StartsWith('sha256:')) { throw 'GitHub не опубликовал контрольную сумму файла: скачайте его вручную со страницы релиза' }

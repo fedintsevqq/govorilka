@@ -272,6 +272,9 @@ def format_snapshot(snap: KeySnapshot, mac: bool = IS_MAC) -> str:
     return " + ".join(parts)
 
 
+_CG_LOCK = threading.Lock()  # CoreGraphics из разных потоков одновременно не опрашиваем
+
+
 class MacKeyboard:
     """CoreGraphics напрямую через ctypes: для опроса состояния клавиш Swift-помощник не нужен."""
 
@@ -288,17 +291,35 @@ class MacKeyboard:
     # это 20 раз в секунду по 128 обращений к системе ни о чём. Настройки показывают все клавиши («полный» опрос).
     light = False
 
+    _allowed: bool | None = None
+    _checked_at = 0.0
+
+    def _access(self) -> bool:
+        """Есть ли «Мониторинг ввода». Без него каждый опрос клавиши — запрос к системе разрешений; такой поток
+        запросов из двух потоков сразу ронял программу (сбой памяти внутри macOS). Нет разрешения — не опрашиваем,
+        только раз в две секунды смотрим, не выдали ли его."""
+        import time
+
+        now = time.monotonic()
+        if self._allowed is None or now - self._checked_at >= (30.0 if self._allowed else 2.0):
+            self._allowed = input_monitoring_status() is not False
+            self._checked_at = now
+        return bool(self._allowed)
+
     def snapshot(self) -> KeySnapshot:
-        flags = self._flags(0)  # kCGEventSourceStateCombinedSessionState
-        mods = frozenset(name for name, bit in _MAC_FLAGS.items() if flags & bit)
-        if self.light and not mods:
-            return KeySnapshot(mods, frozenset())
-        keys = frozenset(
-            _MAC_NAMES.get(code, f"vk{code}")
-            for code in range(0, 128)
-            if code not in _MAC_MOD_CODES and self._key(0, code)
-        )
-        return KeySnapshot(mods, keys)
+        with _CG_LOCK:  # опрос из потока горячей клавиши и из окна настроек — по очереди
+            if not self._access():
+                return KeySnapshot()
+            flags = self._flags(0)  # kCGEventSourceStateCombinedSessionState
+            mods = frozenset(name for name, bit in _MAC_FLAGS.items() if flags & bit)
+            if self.light and not mods:
+                return KeySnapshot(mods, frozenset())
+            keys = frozenset(
+                _MAC_NAMES.get(code, f"vk{code}")
+                for code in range(0, 128)
+                if code not in _MAC_MOD_CODES and self._key(0, code)
+            )
+            return KeySnapshot(mods, keys)
 
 
 # Windows: какое сочетание переключает язык ввода ("1" Alt+Shift — по умолчанию, "2" Ctrl+Shift, "3" нет)
