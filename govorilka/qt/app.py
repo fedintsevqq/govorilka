@@ -160,7 +160,20 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
             return
         if mode == "settings":  # только открыть окно настроек и подождать
             log.info("Самопроверка: открываю настройки")
-            root.findChild(QObject, "settings").open()
+            settings = root.findChild(QObject, "settings")
+            only = os.environ.get("GOVORILKA_LIVE_ONLY")  # поиск сбоя: в окне остаётся один раздел ("-" — ни одного)
+            if only is not None:
+                def sections(item) -> list:  # noqa: ANN001
+                    found = []
+                    for child in item.childItems():
+                        heading = child.property("heading")
+                        found += [(heading, child)] if heading else sections(child)
+                    return found
+
+                for heading, item in sections(settings.contentItem()):
+                    item.setVisible(heading == only)
+                log.info("Самопроверка: в настройках только раздел «%s» (разделов всего %d)", only, len(sections(settings.contentItem())))
+            settings.open()
             wait(6)
             report.write_text("OK settings\n", encoding="utf-8")
             app.quit()

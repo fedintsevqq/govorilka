@@ -159,11 +159,12 @@ jobs:
             fi
           }
           # из исходников с отладочным распределителем памяти Python: ловит порчу памяти и вызовы без GIL в момент ошибки
-          # PYTHONTRACEMALLOC: где выделен испорченный блок памяти
-          LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONTRACEMALLOC=30 PYTHONFAULTHANDLER=1 GOVORILKA_LIVE_MODE=settings
-          LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONFAULTHANDLER=1 GOVORILKA_LIVE_MODE=all
+          debug_live() { LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONFAULTHANDLER=1 "$@"; }
+          # окно настроек по одному разделу: какой из них портит память
+          for only in "-" "Горячая клавиша" "Диктовка" "Запись" "Запуск и вид" "Разрешения macOS" "Подсказки в звонке" "Итоги" "Обновления" "Нейросеть"; do
+            debug_live GOVORILKA_LIVE_MODE=settings "GOVORILKA_LIVE_ONLY=$only"
+          done
           run_live GOVORILKA_LIVE_MODE=settings
-          run_live GOVORILKA_LIVE_MODE=guide
           run_live GOVORILKA_LIVE_MODE=main
           run_live GOVORILKA_LIVE_MODE=all
           exit $failed
