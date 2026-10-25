@@ -251,6 +251,7 @@ def test_mac_swap_script_replaces_the_bundle_keeps_a_backup_and_starts_it(tmp_pa
     running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])
     script = tmp_path / "u.sh"
     script.write_text(installer.mac_swap_script(current, staged, running.pid, max_wait=20, restart=f"echo started > {marker}"))
+    threading.Thread(target=running.wait, daemon=True).start()  # завершённого потомка надо подобрать: «зомби» отвечает на kill -0
     subprocess.run(["sh", str(script)], timeout=60, check=True)
     running.wait(timeout=10)
     assert (current / "Contents" / "v.txt").read_text() == "NEW" and not staged.exists()
