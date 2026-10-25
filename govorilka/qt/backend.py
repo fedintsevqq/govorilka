@@ -1185,10 +1185,19 @@ class Backend(QObject):
         first = key not in self._access_asked
         self._access_asked.add(key)
 
-        def work() -> None:
+        token = key if first else f"open:{key}"
+        if key not in ("microphone", "automation"):
+            # Запросы экрана, клавиатуры и универсального доступа — вызовы macOS внутри программы: только из главного
+            # потока (из фонового они шли одновременно с опросом клавиш и роняли программу). Они не ждут ответа.
             if first:
                 permissions.request(key)
-            self._access_done.emit(key if first else f"open:{key}")
+            QTimer.singleShot(0, lambda: self._on_access_done(token))
+            return
+
+        def work() -> None:  # микрофон и автоматизация ждут ответа человека: через отдельные программы, в фоне
+            if first:
+                permissions.request(key)
+            self._access_done.emit(token)
 
         threading.Thread(target=work, name=f"access-{key}", daemon=True).start()
 

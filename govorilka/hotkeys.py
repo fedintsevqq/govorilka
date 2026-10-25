@@ -253,7 +253,8 @@ def request_input_monitoring() -> None:
     try:
         request = ctypes.CDLL(_CORE_GRAPHICS).CGRequestListenEventAccess
         request.restype = ctypes.c_bool
-        request()
+        with _CG_LOCK:  # не одновременно с опросом клавиш из потока горячей клавиши
+            request()
     except (OSError, AttributeError):
         log.warning("Не получилось запросить «Мониторинг ввода»")
 

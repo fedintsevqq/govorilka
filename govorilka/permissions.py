@@ -194,7 +194,10 @@ def _request_screen() -> None:
 
 
 def _request_input() -> None:
-    _call_bool(CORE_GRAPHICS, "CGRequestListenEventAccess")
+    from govorilka.hotkeys import _CG_LOCK
+
+    with _CG_LOCK:  # не одновременно с опросом клавиш
+        _call_bool(CORE_GRAPHICS, "CGRequestListenEventAccess")
 
 
 def _request_accessibility() -> None:
