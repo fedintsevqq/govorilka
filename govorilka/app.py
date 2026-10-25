@@ -46,7 +46,9 @@ def main() -> None:
     from govorilka.qt.app import run
 
     logging.getLogger(__name__).info("Говорилка %s, %s", version.VERSION, sys.platform)  # версия нужна в любом отчёте о сбое
-    sys.exit(run(background=BACKGROUND_FLAG in sys.argv))
+    from govorilka.installer import UPDATED_FLAG
+
+    sys.exit(run(background=BACKGROUND_FLAG in sys.argv, updated=UPDATED_FLAG in sys.argv))
 
 
 if __name__ == "__main__":

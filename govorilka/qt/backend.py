@@ -39,7 +39,7 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai, asr_models, permissions, updates, version
+from govorilka import ai, asr_models, installer, permissions, updates, version
 from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
@@ -174,6 +174,7 @@ class Backend(QObject):
         self._capturing = False
         self._tour_active = False
         self._ai_busy = False
+        self._installing = False
         self._update: updates.UpdateInfo | None = None
         self._update_status = ""
         self._update_message = ""
@@ -206,6 +207,7 @@ class Backend(QObject):
             (self._access_done, self._on_access_done),
             (self._custom_in, self._on_custom_checked),
             (self._update_in, self._on_update),
+            (self._install_in, self._on_install_done),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -314,6 +316,7 @@ class Backend(QObject):
     customModelChecked = Signal(bool, str, str)  # noqa: N815 — удалось, сообщение, ключ модели
     _custom_in = Signal(bool, str, str)
     _update_in = Signal(object, str, bool)
+    _install_in = Signal(bool, str)
 
     @Slot(str, str, str, bool)
     @safe_slot
@@ -395,6 +398,51 @@ class Backend(QObject):
             self._set_update_state("latest" if manual else "", f"У вас последняя версия: {version.VERSION}" if manual else "")
         if manual and not error and info is None:
             self.toast.emit(f"У вас последняя версия: {version.VERSION}", "success")
+
+    canInstallUpdate = Property(bool, lambda self: installer.can_install(), constant=True)  # noqa: N815
+    installing = Property(bool, lambda self: self._installing, notify=updateChanged)
+
+    @Slot()
+    @safe_slot
+    def installUpdate(self) -> None:  # noqa: N802
+        """«Установить»: скачать новый файл, проверить его и заменить им программу. Говорилка закроется и откроется заново."""
+        info = self._update
+        if info is None or self._installing:
+            return
+        if not installer.can_install():
+            self.downloadUpdate()  # из исходников или не на Windows: скачивание браузером, как раньше
+            return
+        if self.controller.state != AppState.IDLE or self.controller.busy:
+            self.toast.emit("Дождитесь конца записи или расшифровки: после установки Говорилка перезапустится", "info")
+            return
+        self._installing = True
+        self.updateChanged.emit()
+        current = Path(sys.executable)
+
+        def work() -> None:
+            try:
+                new = installer.prepare(info, current, self._status_in.emit)
+                installer.spawn_swap(current, new)
+                self._install_in.emit(True, "")
+            except installer.InstallError as exc:
+                log.warning("Обновление не установлено: %s", exc)
+                self._install_in.emit(False, str(exc))
+            except Exception as exc:  # noqa: BLE001 — любая причина должна дойти до человека
+                log.exception("Сбой установки обновления")
+                self._install_in.emit(False, f"Не получилось установить: {exc}")
+
+        threading.Thread(target=work, name="install-update", daemon=True).start()
+
+    def _on_install_done(self, ok: bool, message: str) -> None:
+        if ok:
+            self._set_status("Устанавливаю обновление: Говорилка сейчас перезапустится…")
+            self.toast.emit("Обновление скачано и проверено. Говорилка перезапустится сама", "success")
+            QTimer.singleShot(700, self.quit)
+            return
+        self._installing = False
+        self._set_status("Готово")
+        self.updateChanged.emit()
+        self.toast.emit(message + ". Можно скачать файл вручную кнопкой «Скачать»", "error")
 
     @Slot()
     @safe_slot

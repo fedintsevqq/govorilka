@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QtMsgType, QTimer, QUrl, qInstallMessageHandler
 from PySide6.QtGui import QIcon
@@ -12,7 +13,7 @@ from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
-from govorilka import single_instance
+from govorilka import installer, single_instance, version
 from govorilka.config import ASSETS_DIR, QML_DIR
 from govorilka.qt.backend import Backend
 from govorilka.qt.icons import IconProvider
@@ -68,7 +69,7 @@ def create_engine(backend: Backend, strict: bool = False) -> QQmlApplicationEngi
     return engine
 
 
-def run(background: bool = False) -> int:
+def run(background: bool = False, updated: bool = False) -> int:
     holder: list[Backend] = []
     lock = single_instance.acquire(
         lambda: holder[0].windowRequested.emit() if holder else None, notify_existing=not background
@@ -117,6 +118,10 @@ def run(background: bool = False) -> int:
         app.applicationStateChanged.connect(on_state)
 
     backend.start()
+    if updated:  # запущены установщиком обновления: новая версия поднялась, прежнюю копию можно удалить
+        backend._startup_notices.append(f"Готово: Говорилка обновлена до версии {version.VERSION}")  # noqa: SLF001
+        if installer.can_install():
+            installer.remove_backup(Path(sys.executable))
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.flush_startup_notices)
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.controller.prefetch_models)  # первый запуск: модели качаются сразу
     app.aboutToQuit.connect(lambda: (backend.shutdown(), tray.hide() if tray else None, lock.close()))

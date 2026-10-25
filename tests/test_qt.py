@@ -841,3 +841,54 @@ def test_automatic_check_is_off_for_source_runs_and_when_disabled(backend, monke
     c._schedule_update_check(3600)
     assert c._update_timer is not None
     c._update_timer.cancel()
+
+
+def test_install_update_prepares_swaps_and_quits_the_app(backend, qapp, monkeypatch):
+    from conftest import pump
+
+    from govorilka import installer, updates
+
+    info = updates.UpdateInfo("9.9.9", "https://github.com/x", "", "f.exe", "https://github.com/f.exe", 100, "ab")
+    backend._update = info
+    calls = []
+    monkeypatch.setattr(installer, "can_install", lambda: True)
+    monkeypatch.setattr(installer, "prepare", lambda i, cur, status: calls.append("prepare") or cur.with_name("new.exe"))
+    monkeypatch.setattr(installer, "spawn_swap", lambda cur, new: calls.append("swap"))
+    quits = []
+    monkeypatch.setattr(backend, "quit", lambda: quits.append(1))
+    backend.installUpdate()
+    assert backend.installing
+    assert pump(qapp, lambda: quits, timeout=5)
+    assert calls == ["prepare", "swap"]
+
+
+def test_install_update_failure_keeps_the_app_and_explains(backend, qapp, monkeypatch):
+    from conftest import pump
+
+    from govorilka import installer, updates
+
+    backend._update = updates.UpdateInfo("9.9.9", "https://github.com/x", "", "f.exe", "https://github.com/f.exe", 100, "ab")
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append((kind, text)))
+    monkeypatch.setattr(installer, "can_install", lambda: True)
+
+    def broken(*a, **k):
+        raise installer.InstallError("Контрольная сумма не совпала")
+
+    monkeypatch.setattr(installer, "prepare", broken)
+    quits = []
+    monkeypatch.setattr(backend, "quit", lambda: quits.append(1))
+    backend.installUpdate()
+    assert pump(qapp, lambda: toasts, timeout=5)
+    assert not backend.installing and not quits and "Контрольная сумма" in toasts[0][1]
+
+
+def test_install_update_falls_back_to_browser_when_not_installable(backend, monkeypatch):
+    from govorilka import installer, updates
+
+    backend._update = updates.UpdateInfo("9.9.9", "https://github.com/x", "", "f.exe", "https://github.com/f.exe", 100, "ab")
+    monkeypatch.setattr(installer, "can_install", lambda: False)
+    opened = []
+    monkeypatch.setattr(backend, "downloadUpdate", lambda: opened.append(1))
+    backend.installUpdate()
+    assert opened and not backend.installing

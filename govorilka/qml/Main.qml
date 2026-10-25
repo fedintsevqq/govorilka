@@ -189,9 +189,25 @@ ApplicationWindow {
                 font.weight: Font.DemiBold
                 color: Theme.text
             }
-            PillButton { text: "Что нового"; implicitHeight: 32; tip: "Открыть страницу релиза на GitHub"; onClicked: backend.openReleasePage() }
-            PillButton { text: "Скачать"; implicitHeight: 32; variant: "primary"; tip: "Скачать новую версию: закройте Говорилку и запустите скачанный файл"; onClicked: backend.downloadUpdate() }
-            IconButton { iconName: "close"; size: 30; tip: "Напомнить позже: плашка скроется до следующего запуска"; onClicked: backend.dismissUpdate() }
+            LoadRing { visible: backend.installing; fraction: backend.loadFraction; size: 20; Layout.alignment: Qt.AlignVCenter }
+            Text {
+                visible: backend.installing
+                text: backend.loadFraction >= 0 ? Math.round(backend.loadFraction * 100) + "%" : "проверяю…"
+                font.pixelSize: 12
+                font.features: { "tnum": 1 }
+                color: Theme.textSecondary
+            }
+            PillButton { text: "Что нового"; implicitHeight: 32; visible: !backend.installing; tip: "Открыть страницу релиза на GitHub"; onClicked: backend.openReleasePage() }
+            PillButton {
+                text: backend.installing ? "Устанавливаю…" : backend.canInstallUpdate ? "Установить" : "Скачать"
+                implicitHeight: 32
+                variant: "primary"
+                enabled: !backend.installing
+                tip: backend.canInstallUpdate ? "Скачать новую версию, проверить и заменить ею программу. Говорилка перезапустится сама"
+                                              : "Скачать новую версию: закройте Говорилку и запустите скачанный файл"
+                onClicked: backend.installUpdate()
+            }
+            IconButton { iconName: "close"; size: 30; visible: !backend.installing; tip: "Напомнить позже: плашка скроется до следующего запуска"; onClicked: backend.dismissUpdate() }
         }
     }
 

@@ -430,7 +430,8 @@ Window {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             visible: text !== ""
-                            text: backend.updateStatus === "available" ? "Доступна версия " + backend.updateInfo.version + ". Скачайте файл, закройте Говорилку и запустите его."
+                            text: backend.updateStatus === "available"
+                                  ? "Доступна версия " + backend.updateInfo.version + (backend.canInstallUpdate ? ". Нажмите «Установить»: Говорилка сама обновится и перезапустится." : ". Скачайте файл, закройте Говорилку и запустите его.")
                                   : backend.updateMessage
                             font.pixelSize: 12
                             color: backend.updateStatus === "error" ? Theme.danger : backend.updateStatus === "latest" ? Theme.success : Theme.textSecondary
@@ -447,7 +448,14 @@ Window {
                 RowLayout {
                     visible: backend.updateStatus === "available"
                     spacing: 8
-                    PillButton { text: "Скачать"; variant: "primary"; iconName: "open"; tip: "Скачать новую версию"; onClicked: backend.downloadUpdate() }
+                    PillButton {
+                        text: backend.installing ? "Устанавливаю…" : backend.canInstallUpdate ? "Установить" : "Скачать"
+                        variant: "primary"
+                        iconName: "open"
+                        enabled: !backend.installing
+                        tip: backend.canInstallUpdate ? "Скачать, проверить и установить новую версию; Говорилка перезапустится сама" : "Скачать новую версию"
+                        onClicked: backend.installUpdate()
+                    }
                     PillButton { text: "Что нового"; tip: "Страница релиза на GitHub"; onClicked: backend.openReleasePage() }
                     PillButton { text: "Пропустить эту версию"; tip: "Больше не напоминать об этой версии"; onClicked: backend.skipUpdate() }
                 }
