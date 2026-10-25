@@ -55,6 +55,10 @@ jobs:
       - name: Rename
         shell: bash
         run: mv dist/Govorilka.exe "dist/Govorilka-${GOVORILKA_VERSION:-dev}-windows-x64.exe"
+      # «Установить» на этом самом файле: SHA-256 и подмена exe скриптом. Не прошло — релиза не будет
+      - name: Check one-click update on the built exe
+        shell: bash
+        run: python tools/check_update.py dist/Govorilka-*-windows-x64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -146,6 +150,9 @@ jobs:
             echo "hdiutil: попытка $attempt не удалась"; sleep $((attempt * 5))
             [ "$attempt" = 5 ] && exit 1
           done
+      # «Установить» на этом самом образе: SHA-256, подпись тем же сертификатом, копия из образа, подмена .app
+      - name: Check one-click update on the built dmg
+        run: python tools/check_update.py dist/Govorilka-*-macos-*.dmg dist/Govorilka.app
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}

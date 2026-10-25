@@ -262,3 +262,10 @@ def test_mac_swap_script_replaces_the_bundle_keeps_a_backup_and_starts_it(tmp_pa
 def test_mac_swap_script_text_quotes_awkward_paths(tmp_path):
     text = installer.mac_swap_script(PurePosixPath("/Apps/My App's.app"), PurePosixPath("/Apps/.new.app"), 42)
     assert "'/Apps/My App'\"'\"'s.app'" in text and "kill -0 42" in text and "--updated" in text
+
+
+def test_swap_script_calls_system_commands_by_full_path():
+    """В PATH бывают find и ping из Git: с ними скрипт решил бы, что программа уже закрылась."""
+    text = installer.swap_script(Path("C:/a/Govorilka.exe"), Path("C:/a/Govorilka.new.exe"), 42)
+    assert r"%SystemRoot%\System32\find.exe" in text and r"%SystemRoot%\System32\tasklist.exe" in text
+    assert "| find " not in text and "\ntimeout " not in text

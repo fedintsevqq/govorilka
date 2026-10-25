@@ -43,6 +43,9 @@ ALLOWED_HOSTS = ("github.com", ".githubusercontent.com")  # куда GitHub пе
 UPDATED_FLAG = "--updated"
 BACKUP_SUFFIX = ".bak"
 SWAP_WAIT_S = 60  # сколько скрипт ждёт, пока старый файл освободится (антивирус тоже может держать его)
+# Системные команды по полному пути: в PATH бывает find из Git, который ищет файлы, а не строки.
+TASKLIST, FIND = r"%SystemRoot%\System32\tasklist.exe", r"%SystemRoot%\System32\find.exe"
+PAUSE = r'"%SystemRoot%\System32\ping.exe" -n 2 127.0.0.1 >nul'  # пауза в 1 с: timeout без консоли сразу падает
 CREATE_NO_WINDOW, DETACHED_PROCESS, NEW_PROCESS_GROUP = 0x08000000, 0x00000008, 0x00000200
 
 
@@ -173,11 +176,11 @@ def swap_script(
         "set /a tries=0",
         # 1. ждём, пока Говорилка закроется (строки без скобок: переменные раскрываются при выполнении каждой строки)
         ":wait",
-        f'tasklist /FI "PID eq {wait_pid}" 2>nul | find " {wait_pid} " >nul',
+        f'"{TASKLIST}" /FI "PID eq {wait_pid}" 2>nul | "{FIND}" " {wait_pid} " >nul',
         "if errorlevel 1 goto swap",
         "set /a tries+=1",
         f"if %tries% geq {max_wait} goto fail",
-        "ping -n 2 127.0.0.1 >nul",  # пауза в 1 с: timeout без консоли падает сразу
+        PAUSE,
         "goto wait",
         # 2. подменяем файл; пока его держит антивирус или закрывающийся процесс, пробуем снова
         ":swap",
@@ -197,7 +200,7 @@ def swap_script(
         ":retry",
         "set /a tries+=1",
         f"if %tries% geq {max_wait} goto fail",
-        "ping -n 2 127.0.0.1 >nul",  # пауза в 1 с: timeout без консоли падает сразу
+        PAUSE,
         "goto again",
         # не получилось подменить: оставляем как было и запускаем прежнюю версию
         ":fail",
