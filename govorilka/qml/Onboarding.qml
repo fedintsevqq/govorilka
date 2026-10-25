@@ -142,7 +142,7 @@ Popup {
                 id: primary
                 variant: "primary"
                 text: tour.step === 0 ? "Покажите" : tour.step === tour.steps - 1 ? "Всё понятно" : (tour.key === "access" && accessDone ? "Готово, дальше" : "Дальше")
-                readonly property bool accessDone: backend.access.length > 0 && backend.access.every(row => row.granted === true)
+                readonly property bool accessDone: backend.access.length > 0 && backend.access.every(row => row.state === "yes")
                 iconName: tour.step === tour.steps - 1 ? "check" : "chevron"
                 tip: tour.step === tour.steps - 1 ? "Закрыть знакомство. Открыть снова можно в настройках" : "Следующий шаг (стрелка вправо или Enter)"
                 onClicked: tour.next()

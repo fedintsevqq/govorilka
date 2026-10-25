@@ -47,48 +47,37 @@ Window {
     readonly property bool claudeCode: draft.ai_target === "claude_code"   // папка нужна только Claude Code
     signal tourRequested()
 
-    function trace(step) { if (backend.liveFlags.indexOf("trace") >= 0) console.warn("settings.open: " + step) }   // поиск сбоя в CI
     function open() {
-        trace("settings")
         draft = JSON.parse(JSON.stringify(backend.settings))
         original = JSON.parse(JSON.stringify(backend.settings))
-        trace("autostart")
         autostart = backend.autostart
         hotkeyLabel = draft.hotkeyLabel
         hotkeyWarning = ""
         dictationLabel = draft.dictationLabel
         dictationWarning = ""
-        trace("fields")
         promptField.text = draft.claude_prompt
         profileField.text = draft.assistant_profile || ""
         apiUrlField.text = draft.assistant_api_url || ""
         apiModelField.text = draft.assistant_api_model || ""
         apiKeyField.text = ""
-        trace("apiPresets")
         apiBox.currentIndex = Math.max(0, backend.apiPresets.findIndex(p => p.id === draft.assistant_api_preset))
         folderField.text = draft.transcripts_dir
         claudeField.text = draft.claude_workdir
-        trace("isCustomModel")
         customKey = backend.isCustomModel(draft.model) ? draft.model : ""
         customOpen = false
         customChecking = false
         customMessage = ""
         catalogList.expanded = false
-        trace("refreshCatalog")
         backend.refreshCatalog()
-        trace("boxes")
         aiBox.currentIndex = Math.max(0, aiBox.find(draft.ai_target))
         openBox.currentIndex = draft.ai_open_in === "browser" ? 1 : 0
         unloadBox.currentIndex = Math.max(0, [5, 10, 30, 0].indexOf(draft.unload_after_min))
         themeBox.currentIndex = ["system", "dark", "light"].indexOf(draft.theme)
         actionBox.currentIndex = draft.hotkey_action === "record" ? 1 : 0
-        trace("show")
         show()
         raise()
         requestActivate()
-        trace("watchKeys")
         backend.watchKeys("settings", true)
-        trace("done")
     }
     function setValue(name, value) { draft[name] = value; draftChanged() }
     onClosing: backend.watchKeys("settings", false)

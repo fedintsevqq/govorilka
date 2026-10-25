@@ -1186,3 +1186,42 @@ def test_api_key_goes_to_the_system_keychain_not_to_settings(backend, monkeypatc
     assert "sk-test" not in str(backend.settings)
     backend.setAssistantKey("")
     assert not backend.assistantKeySaved
+
+
+def _nones(value, path="") -> list[str]:
+    """Где внутри списков и словарей для QML лежит None."""
+    if value is None:
+        return [path or "<значение>"]
+    if isinstance(value, dict):
+        return [p for key, item in value.items() for p in _nones(item, f"{path}.{key}")]
+    if isinstance(value, (list, tuple)):
+        return [p for index, item in enumerate(value) for p in _nones(item, f"{path}[{index}]")]
+    return []
+
+
+def test_lists_and_maps_for_qml_hold_no_none(backend):
+    # None внутри QVariantList/QVariantMap PySide отдаёт в QML обёрткой Python-объекта; на macOS чтение такой
+    # обёртки из QML портило память, и окно настроек падало
+    meta = backend.metaObject()
+    found, checked = [], 0
+    for index in range(meta.propertyCount()):
+        prop = meta.property(index)
+        if prop.typeName() in ("QVariantList", "QVariantMap"):
+            checked += 1
+            found += _nones(backend.property(prop.name()), prop.name())
+    assert checked >= 10 and found == []
+
+
+def test_mac_access_rows_carry_status_as_text(backend, monkeypatch):
+    from govorilka import permissions
+    from govorilka.qt import backend as backend_module
+
+    monkeypatch.setattr(backend_module.sys, "platform", "darwin")
+    monkeypatch.setattr(permissions, "access_status", lambda: {"microphone": True, "screen": False, "input": None})
+    backend._access_status = None
+    rows = {row["id"]: row for row in backend._get_access()}
+    assert rows["microphone"]["state"] == "yes"
+    assert rows["screen"]["state"] == "no"
+    assert rows["input"]["state"] == "unknown"
+    assert rows["accessibility"]["state"] == "unknown"
+    assert _nones(list(rows.values())) == []

@@ -80,6 +80,11 @@ def safe_slot(func):  # noqa: ANN001, ANN201
     return wrapper
 
 
+def access_state(granted: bool | None) -> str:
+    """Статус разрешения для QML: "yes" — разрешено, "no" — запрещено, "unknown" — macOS ещё не спрашивала."""
+    return {True: "yes", False: "no"}.get(granted, "unknown")
+
+
 def settings_to_map(settings: Settings) -> dict[str, object]:
     data = asdict(settings)
     for field_name, label in (("hotkey", "hotkeyLabel"), ("dictation_hotkey", "dictationLabel")):
@@ -1169,8 +1174,10 @@ class Backend(QObject):
         if self._access_status is None:  # спрашиваем macOS один раз на обновление, а не на каждую привязку в окне
             self._access_status = permissions.access_status()
         status = self._access_status
+        # Статус строкой, а не True/False/None: None внутри списка для QML PySide превращает в обёртку Python-объекта,
+        # и на macOS чтение такой строки из QML портило память — окно настроек падало через пару секунд
         return [
-            {"id": key, "pane": pane, "label": label, "hint": hint, "granted": status.get(key)}
+            {"id": key, "pane": pane, "label": label, "hint": hint, "state": access_state(status.get(key))}
             for key, pane, label, hint in permissions.ACCESS_ROWS
         ]
 

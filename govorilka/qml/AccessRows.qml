@@ -8,7 +8,7 @@ ColumnLayout {
     id: rows
     spacing: 8
     property bool compact: false   // в знакомстве места меньше
-    readonly property int missing: backend.access.filter(row => row.granted !== true).length
+    readonly property int missing: backend.access.filter(row => row.state !== "yes").length
     readonly property bool allGranted: backend.access.length > 0 && missing === 0
 
     Timer {   // человек включает переключатель в Системных настройках — статус обновляется сам
@@ -58,12 +58,12 @@ ColumnLayout {
             radius: 14
             color: Theme.coreRaised
             border.color: Theme.shellLine
-            Accessible.name: modelData.label + (modelData.granted === true ? ": разрешено" : modelData.granted === false ? ": не разрешено" : "")
+            Accessible.name: modelData.label + (modelData.state === "yes" ? ": разрешено" : modelData.state === "no" ? ": не разрешено" : "")
 
             Rectangle {   // статус: зелёный — разрешено, красный — нет, серый — система спросит сама
                 x: 14; anchors.verticalCenter: parent.verticalCenter
                 width: 10; height: 10; radius: 5
-                color: row.modelData.granted === true ? Theme.success : row.modelData.granted === false ? Theme.danger : Theme.textTertiary
+                color: row.modelData.state === "yes" ? Theme.success : row.modelData.state === "no" ? Theme.danger : Theme.textTertiary
             }
             Column {
                 anchors { left: parent.left; leftMargin: 36; right: openButton.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
@@ -74,12 +74,12 @@ ColumnLayout {
                 id: openButton
                 anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
                 implicitHeight: 32
-                text: row.modelData.granted === true ? "Открыть" : "Разрешить"
-                tip: row.modelData.granted === true
+                text: row.modelData.state === "yes" ? "Открыть" : "Разрешить"
+                tip: row.modelData.state === "yes"
                      ? "Открыть «Системные настройки» на разделе «" + row.modelData.label + "»"
                      : "Показать запрос macOS или, если он уже был, открыть раздел «" + row.modelData.label + "»: останется включить Говорилку"
-                variant: row.modelData.granted === false ? "primary" : "ghost"
-                onClicked: row.modelData.granted === true ? backend.openPrivacy(row.modelData.pane) : backend.requestAccess(row.modelData.id)
+                variant: row.modelData.state === "no" ? "primary" : "ghost"
+                onClicked: row.modelData.state === "yes" ? backend.openPrivacy(row.modelData.pane) : backend.requestAccess(row.modelData.id)
             }
         }
     }
