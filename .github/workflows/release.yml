@@ -142,9 +142,11 @@ jobs:
         run: |
           set +e
           failed=0
+          app=dist/Govorilka.app/Contents/MacOS/Govorilka
           run_live() {
             rm -f ci-data/selftest-live.txt
-            env "$@" dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-live
+            # perl alarm вместо timeout (в macOS его нет): зависший запуск не держит всю сборку
+            env "$@" perl -e 'alarm 90; exec @ARGV' ${LIVE_CMD:-$app} --selftest-live
             code=$?
             result=$(head -1 ci-data/selftest-live.txt 2>/dev/null)
             echo "=== $* -> код $code, $result"
@@ -156,9 +158,11 @@ jobs:
               [ -n "$report" ] && { echo "--- нативный стек ($report)"; python3 tools/ips_summary.py "$report"; rm -f "$report"; }
             fi
           }
-          run_live GOVORILKA_LIVE_MODE=props
+          # из исходников с отладочным распределителем памяти Python: ловит порчу памяти и вызовы без GIL в момент ошибки
+          LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONFAULTHANDLER=1 GOVORILKA_LIVE_MODE=settings
           run_live GOVORILKA_LIVE_MODE=settings
-          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_FLAGS=nocapture
+          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_ACCESS=1 GOVORILKA_LIVE_FLAGS=nocapture,noaccesstimer GOVORILKA_LIVE_NO_KEYBOARD=1
+          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_ACCESS=1 GOVORILKA_LIVE_FLAGS=noaccesstimer
           run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_FLAGS=nocapture GOVORILKA_LIVE_NO_KEYBOARD=1
           run_live GOVORILKA_LIVE_MODE=guide
           run_live GOVORILKA_LIVE_MODE=main
