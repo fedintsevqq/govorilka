@@ -21,25 +21,28 @@ ColumnLayout {
     // итог сверху: сколько осталось, а когда всё зелёное — «Всё готово»
     Rectangle {
         Layout.fillWidth: true
-        implicitHeight: summaryRow.implicitHeight + 18   // высота по тексту: длинная подпись переносится и не вылезает за рамку
+        // высота по тексту, но без раскладки внутри: ширина текста задана якорями, а не им самим — по кругу не считается
+        implicitHeight: Math.max(34, summaryText.implicitHeight + 16)
         radius: 12
         readonly property color tint: rows.allGranted ? Theme.success : Theme.accent
         color: Qt.rgba(tint.r, tint.g, tint.b, Theme.dark ? 0.14 : 0.10)
         border.color: Qt.rgba(tint.r, tint.g, tint.b, 0.35)
-        RowLayout {
-            id: summaryRow
-            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
-            spacing: 8
-            Icon { name: rows.allGranted ? "check" : "bolt"; size: 15; color: parent.parent.tint; Layout.alignment: Qt.AlignTop; Layout.topMargin: 1 }
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: rows.allGranted ? "Всё готово: все разрешения выданы"
-                    : "Осталось разрешить: " + rows.missing + " из " + backend.access.length + ". Нажмите «Разрешить», включите Говорилку и вернитесь сюда"
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
-                color: Theme.text
-            }
+        Icon {
+            id: summaryIcon
+            x: 12; y: 9
+            name: rows.allGranted ? "check" : "bolt"
+            size: 15
+            color: parent.tint
+        }
+        Text {
+            id: summaryText
+            anchors { left: summaryIcon.right; leftMargin: 8; right: parent.right; rightMargin: 12; top: parent.top; topMargin: 8 }
+            wrapMode: Text.WordWrap
+            text: rows.allGranted ? "Всё готово: все разрешения выданы"
+                : "Осталось разрешить: " + rows.missing + " из " + backend.access.length + ". Нажмите «Разрешить», включите Говорилку и вернитесь сюда"
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
+            color: Theme.text
         }
         Accessible.role: Accessible.StaticText
         Accessible.name: rows.allGranted ? "Все разрешения выданы" : "Осталось разрешить: " + rows.missing
