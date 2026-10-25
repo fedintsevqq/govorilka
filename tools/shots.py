@@ -53,6 +53,9 @@ def shoot(backend: Backend, window, path: Path) -> None:
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     QQuickStyle.setStyle("Basic")
+    from govorilka import installer
+
+    installer.can_install = lambda: True  # снимки из исходников показывают кнопку как у собранного приложения
     app = QApplication(sys.argv)
     backend = Backend(lambda l: Controller(l, Settings(theme=sys.argv[2] if len(sys.argv) > 2 else "dark"), hotkeys=_NoHotkeys()))
     engine = create_engine(backend)
@@ -115,11 +118,28 @@ def main(out: Path) -> None:
             feed.setProperty(key, value)
         QMetaObject.invokeMethod(feed, "openMenu", Qt.ConnectionType.DirectConnection, Q_ARG("QVariant", 520), Q_ARG("QVariant", 300))
 
+    def offer_update(installing: bool) -> None:
+        from govorilka import updates
+
+        info = updates.UpdateInfo("0.3.3", "https://github.com/fedintsevqq/govorilka/releases/tag/v0.3.3", "", "f.exe", "https://github.com/f.exe", 176_000_000, "ab")
+        backend._on_update(info, "", False)
+        backend._installing = installing
+        if installing:
+            backend._set_status("Скачиваю обновление: 61 из 168 МБ (36%)")
+        backend.updateChanged.emit()
+
+    steps.append(lambda: offer_update(False))
+    steps.append(lambda: shoot(backend, root, out / "6-update.png"))
+    steps.append(lambda: offer_update(True))
+    steps.append(lambda: shoot(backend, root, out / "7-update-installing.png"))
+    steps.append(lambda: (setattr(backend, "_installing", False), backend.updateChanged.emit()))
     steps.append(select_and_menu)
     steps.append(lambda: shoot(backend, root, out / "5-selection.png"))
     steps.append(lambda: invoke("feed", "clearSelection"))
     steps.append(lambda: invoke("settings", "open"))
     steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings.png"))
+    steps.append(lambda: (offer_update(False), invoke("settings", "showUpdates")))
+    steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings-updates.png"))
     steps.append(lambda: (root.findChild(QObject, "settings").close(), invoke("radial", "dismiss"))[1])
     steps.append(lambda: backend.radialRequested.emit(900, 400))
     steps.append(lambda: None)

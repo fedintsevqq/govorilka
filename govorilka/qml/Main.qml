@@ -107,7 +107,7 @@ ApplicationWindow {
 
             Item {   // кольцо загрузки моделей: появляется, пока они качаются или грузятся в память
                 id: loadIndicator
-                visible: backend.loading
+                visible: backend.loading && !backend.installing   // качается обновление: процент уже в плашке, это не модели
                 Layout.preferredWidth: visible ? loadRow.implicitWidth : 0
                 Layout.preferredHeight: 26
                 opacity: visible ? 1 : 0

@@ -183,6 +183,8 @@ Window {
         onAccepted: if (target) target.text = selectedFolder.toString().replace(/^file:\/\/\//, "")
     }
 
+    function showUpdates() { scroll.contentItem.contentY = Math.max(0, updatesSection.y - 12) }   // для снимков интерфейса
+
     ScrollView {
         id: scroll
         anchors { fill: parent; bottomMargin: 76 }
@@ -413,6 +415,7 @@ Window {
             }
 
             Section {
+                id: updatesSection
                 heading: "Обновления"
                 RowLayout {
                     Layout.fillWidth: true
