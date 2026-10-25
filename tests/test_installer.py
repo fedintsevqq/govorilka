@@ -119,7 +119,7 @@ def run_script(tmp_path, *, lock=False, max_wait=20):
     )
     handle = open(current, "rb") if lock else None  # открытый файл нельзя переименовать: как у не закрывшейся программы
     try:
-        subprocess.run(["cmd.exe", "/c", str(script)], timeout=60, check=False, capture_output=True)
+        subprocess.run(["cmd.exe", "/c", str(script)], timeout=60, check=False, capture_output=True, stdin=subprocess.DEVNULL, creationflags=installer.CREATE_NO_WINDOW)  # без консоли, как в жизни
     finally:
         if handle:
             handle.close()

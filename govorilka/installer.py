@@ -143,7 +143,7 @@ def swap_script(
         "if errorlevel 1 goto swap",
         "set /a tries+=1",
         f"if %tries% geq {max_wait} goto fail",
-        "timeout /t 1 /nobreak >nul",
+        "ping -n 2 127.0.0.1 >nul",  # пауза в 1 с: timeout без консоли падает сразу
         "goto wait",
         # 2. подменяем файл; пока его держит антивирус или закрывающийся процесс, пробуем снова
         ":swap",
@@ -163,7 +163,7 @@ def swap_script(
         ":retry",
         "set /a tries+=1",
         f"if %tries% geq {max_wait} goto fail",
-        "timeout /t 1 /nobreak >nul",
+        "ping -n 2 127.0.0.1 >nul",  # пауза в 1 с: timeout без консоли падает сразу
         "goto again",
         # не получилось подменить: оставляем как было и запускаем прежнюю версию
         ":fail",
