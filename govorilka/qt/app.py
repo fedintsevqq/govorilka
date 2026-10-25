@@ -143,6 +143,21 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
 
     def step() -> None:
         backend.finishTour()
+        if mode == "props":  # по очереди всё, что окно настроек спрашивает у программы, с записью перед каждым
+            names = ["settings", "access", "accessAvailable", "catalog", "models", "customTypes", "llmCatalog", "summaryModel",
+                     "ramGb", "assistantKeySaved", "apiPresets", "installHint", "isTrialBuild", "featuresAll",
+                     "updateInfo", "autostart", "inputMonitoringMissing", "liveKeys", "aiTargets", "knownVoices"]
+            for name in names:
+                log.info("Самопроверка: читаю %s", name)
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+                try:
+                    backend.property(name)
+                except Exception:  # noqa: BLE001
+                    log.exception("Самопроверка: %s не читается", name)
+            report.write_text("OK props" + chr(10), encoding="utf-8")
+            app.quit()
+            return
         if mode == "settings":  # только открыть окно настроек и подождать
             log.info("Самопроверка: открываю настройки")
             root.findChild(QObject, "settings").open()

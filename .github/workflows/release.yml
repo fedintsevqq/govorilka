@@ -154,6 +154,7 @@ jobs:
               echo "--- log"; tail -n 15 ci-data/govorilka.log 2>/dev/null
             fi
           }
+          run_live GOVORILKA_LIVE_MODE=props
           run_live GOVORILKA_LIVE_MODE=settings
           run_live GOVORILKA_LIVE_MODE=settings QSG_RENDER_LOOP=basic
           run_live GOVORILKA_LIVE_MODE=guide
