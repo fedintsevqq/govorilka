@@ -188,3 +188,10 @@ def test_controller_saves_the_summary_into_the_transcript_file(tmp_path, monkeyp
     text = c.make_summary(lambda _s: None)
     assert "Обсудили релиз" in text and Server.stopped
     assert "## Итоги" in c.last_file.read_text(encoding="utf-8")
+
+
+def test_empty_sections_and_thinking_are_removed_from_the_answer():
+    raw = "<think>думаю</think>\n### Кратко\nОбсудили релиз.\n\n### Задачи\n- Я — тесты\n\n### Открытые вопросы\nНет\n"
+    assert summary.clean_answer(raw) == "### Кратко\nОбсудили релиз.\n\n### Задачи\n- Я — тесты"
+    assert summary.clean_answer("### Решения\n—\n### Задачи\n- Я — тесты") == "### Задачи\n- Я — тесты"
+    assert "Нет" in summary.clean_answer("### Решения\nНет, так не пойдёт: нужно позже.")  # настоящий текст не трогаем
