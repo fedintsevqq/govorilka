@@ -277,9 +277,15 @@ class MacKeyboard:
         self._key.restype = ctypes.c_bool
         self._key.argtypes = [ctypes.c_int32, ctypes.c_uint16]
 
+    # Фоновый опрос горячей клавиши («лёгкий»): пока не зажат ни один модификатор, остальные 128 клавиш не опрашиваем —
+    # это 20 раз в секунду по 128 обращений к системе ни о чём. Настройки показывают все клавиши («полный» опрос).
+    light = False
+
     def snapshot(self) -> KeySnapshot:
         flags = self._flags(0)  # kCGEventSourceStateCombinedSessionState
         mods = frozenset(name for name, bit in _MAC_FLAGS.items() if flags & bit)
+        if self.light and not mods:
+            return KeySnapshot(mods, frozenset())
         keys = frozenset(
             _MAC_NAMES.get(code, f"vk{code}")
             for code in range(0, 128)
@@ -388,6 +394,8 @@ class HotkeyWatcher:
             try:
                 if self._keyboard is None:
                     self._keyboard = system_keyboard()
+                    if hasattr(self._keyboard, "light"):
+                        self._keyboard.light = True  # Mac: не опрашивать все клавиши, пока нет модификаторов
                 snap = self._keyboard.snapshot()
                 fired = detector.update(snap, self._clock())
             except Exception as exc:  # noqa: BLE001 — опрос не должен умирать молча, но и не должен падать

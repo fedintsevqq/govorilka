@@ -38,6 +38,7 @@ Window {
         modelBox.currentIndex = Math.max(0, modelBox.find(draft.model))
         aiBox.currentIndex = Math.max(0, aiBox.find(draft.ai_target))
         openBox.currentIndex = draft.ai_open_in === "browser" ? 1 : 0
+        unloadBox.currentIndex = Math.max(0, [5, 10, 30, 0].indexOf(draft.unload_after_min))
         themeBox.currentIndex = ["system", "dark", "light"].indexOf(draft.theme)
         actionBox.currentIndex = draft.hotkey_action === "record" ? 1 : 0
         show()
@@ -234,6 +235,20 @@ Window {
                     onActivated: win.setValue("model", backend.models[currentIndex].id)
                     function find(id) { for (let i = 0; i < backend.models.length; ++i) if (backend.models[i].id === id) return i; return 0 }
                 }
+                Label { text: "Освобождать память, когда запись не идёт" }
+                ComboField {
+                    id: unloadBox
+                    model: ["Через 5 минут", "Через 10 минут", "Через 30 минут", "Никогда"]
+                    onActivated: win.setValue("unload_after_min", [5, 10, 30, 0][currentIndex])
+                }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Модели занимают около гигабайта. Если не записывать, Говорилка выгрузит их и будет занимать около 200 МБ. Следующая запись начнётся на пару секунд позже."
+                    font.pixelSize: 12
+                    lineHeight: 1.2
+                    color: Theme.textTertiary
+                }
                 Label { text: "Куда сохранять транскрипты" }
                 FieldBox { id: folderField; trailingButton: true; onBrowse: { folderDialog.target = folderField; folderDialog.open() } }
                 ToggleRow { title: "Микрофон"; hint: "Ваш голос — «Я»"; checked: win.draft.capture_mic === true; onToggled: (v) => win.setValue("capture_mic", v) }
@@ -362,7 +377,7 @@ Window {
     // Esc в открытом списке закрывает только список, а не всё окно
     Shortcut {
         sequences: ["Escape"]
-        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible
+        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible
         onActivated: win.close()
     }
 }

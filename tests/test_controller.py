@@ -248,3 +248,28 @@ def test_renaming_a_label_that_no_longer_exists_changes_nothing():
     transcript.add(Utterance("Собеседник 1", 1.0, "привет", 2.0, "system", "Собеседник 1"))
     assert transcript.rename_voice("Собеседник 7", "Аня") == 0
     assert transcript.aliases == {} and transcript.user_named == set()
+
+
+def test_models_are_unloaded_when_idle_and_loaded_again_on_demand(app, monkeypatch):
+    from govorilka import controller as controller_module
+
+    c, _ = app
+    c.engines = object()
+    assert c.unload_models() is True and c.engines is None  # простой: выгрузили
+    c.engines = object()
+    c.state = AppState.RECORDING
+    assert c.unload_models() is False and c.engines is not None  # во время записи модели трогать нельзя
+    c.state = AppState.IDLE
+
+
+def test_unload_is_scheduled_after_a_recording_and_cancelled_by_the_next_one(app):
+    c, _ = app
+    c.engines = object()
+    c.settings = c.settings.__class__(unload_after_min=10)
+    c._schedule_unload()
+    assert c._unload_timer is not None and c._unload_timer.interval == 600
+    c._cancel_unload()
+    assert c._unload_timer is None
+    c.settings = c.settings.__class__(unload_after_min=0)  # «никогда»
+    c._schedule_unload()
+    assert c._unload_timer is None

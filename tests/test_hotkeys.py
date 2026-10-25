@@ -306,3 +306,22 @@ def test_copy_in_another_process_holds_the_lock(tmp_path):
     lock = single_instance.acquire(lambda: None, folder=tmp_path)
     assert lock is not None
     lock.close()
+
+
+def test_mac_light_poll_skips_the_key_scan_until_a_modifier_is_held():
+    from govorilka import hotkeys
+
+    scanned = []
+    keyboard = hotkeys.MacKeyboard.__new__(hotkeys.MacKeyboard)
+    keyboard._flags = lambda source: 0
+    keyboard._key = lambda source, code: scanned.append(code) or False
+    keyboard.light = True
+    assert keyboard.snapshot() == hotkeys.KeySnapshot(frozenset(), frozenset()) and scanned == []
+    keyboard._flags = lambda source: hotkeys._MAC_FLAGS["alt"]  # зажат Option
+    keyboard.snapshot()
+    assert len(scanned) > 100  # с модификатором клавиши опрашиваются как раньше
+    scanned.clear()
+    keyboard.light = False  # настройки показывают все клавиши всегда
+    keyboard._flags = lambda source: 0
+    keyboard.snapshot()
+    assert len(scanned) > 100

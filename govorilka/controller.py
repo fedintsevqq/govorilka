@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import subprocess
 import sys
@@ -96,6 +97,7 @@ class Controller:
         self.transcript: Transcript | None = None
         self.last_file: Path | None = None
         self._stopping: threading.Thread | None = None
+        self._unload_timer: threading.Timer | None = None
         self._voice_book: VoiceBook | None = None
         self._closing = False  # идёт выход: новые записи не начинаем
         self._probe_country = ai.probe_country  # подменяются в тестах: настоящие проверки ходят в сеть
@@ -178,8 +180,38 @@ class Controller:
 
     def _ensure_engines(self) -> Engines:
         """Вызывается из фонового потока: при первом запуске модели скачиваются."""
+        self._cancel_unload()
         self.engines = load_engines(self.settings.model, self.listener.on_status, self.engines)
         return self.engines
+
+    # ---------- память: модели выгружаются, когда запись не идёт ----------
+
+    def _schedule_unload(self) -> None:
+        """Модели занимают около гигабайта. Если запись не идёт, через unload_after_min минут они выгружаются:
+        в трее остаётся ~200 МБ, а следующая запись начнётся на пару секунд позже."""
+        self._cancel_unload()
+        minutes = self.settings.unload_after_min
+        if minutes <= 0 or self._closing or self.engines is None:
+            return
+        timer = threading.Timer(minutes * 60, self.unload_models)
+        timer.daemon = True
+        self._unload_timer = timer
+        timer.start()
+
+    def _cancel_unload(self) -> None:
+        timer, self._unload_timer = self._unload_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def unload_models(self) -> bool:
+        """Выгружает модели, если ими никто не пользуется. True — выгрузили."""
+        if self.engines is None or self.state != AppState.IDLE or self.busy or self.session is not None:
+            return False
+        self.engines = None
+        self._unload_timer = None
+        gc.collect()  # веса в памяти освобождаются только после сборки мусора
+        log.info("Модели выгружены из памяти: запись не идёт")
+        return True
 
     # ---------- живая запись ----------
 
@@ -255,6 +287,7 @@ class Controller:
                 failure = f"Запись остановилась с ошибкой: {exc}. Проверьте папку с транскриптами."
             finally:
                 self._set_state(AppState.IDLE)
+                self._schedule_unload()
             if failure:
                 self.listener.on_error(failure)
             else:
@@ -328,6 +361,7 @@ class Controller:
                 log.exception("Ошибка после расшифровки файла")
         self.file_job = None
         self._set_state(AppState.IDLE)
+        self._schedule_unload()
         if saved is None and error != CANCELLED:
             self.listener.on_error(error or "Не получилось расшифровать файл")
         elif saved is None:
