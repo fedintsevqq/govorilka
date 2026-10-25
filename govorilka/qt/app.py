@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from PySide6.QtCore import QtMsgType, QTimer, QUrl, qInstallMessageHandler
+from PySide6.QtCore import QEvent, QObject, Qt, QtMsgType, QTimer, QUrl, qInstallMessageHandler
 from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
@@ -30,6 +30,19 @@ class QmlLoadError(RuntimeError):
 def _log_qt_message(kind: QtMsgType, _context: object, message: str) -> None:
     if kind in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
         log.warning("Qt: %s", message)
+
+
+class _QuitFilter(QObject):
+    """Ловит запрос на выход из приложения (Cmd+Q) раньше, чем окна успеют его отменить."""
+
+    def __init__(self, backend: Backend) -> None:
+        super().__init__(backend)
+        self._backend = backend
+
+    def eventFilter(self, _watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Quit:
+            self._backend.begin_quit()
+        return False
 
 
 def create_engine(backend: Backend, strict: bool = False) -> QQmlApplicationEngine:
@@ -91,7 +104,17 @@ def run(background: bool = False) -> int:
     if background and tray is not None:
         root.hide()  # автозапуск: окно не выскакивает, работают трей и горячая клавиша
     if sys.platform == "darwin":
-        app.applicationStateChanged.connect(lambda state: None)  # значок в Dock оживляет повторный запуск
+        # Cmd+Q и «Завершить» в Dock приходят как событие выхода: пока окно «закрывается в трей», оно бы его отменило
+        quit_filter = _QuitFilter(backend)
+        app.installEventFilter(quit_filter)
+        app._quit_filter = quit_filter  # type: ignore[attr-defined]  # держим ссылку: иначе фильтр соберёт сборщик мусора
+
+        # щелчок по значку в Dock, когда окно спрятано, — показать окно
+        def on_state(state: Qt.ApplicationState) -> None:
+            if state == Qt.ApplicationState.ApplicationActive and not root.isVisible():
+                backend.windowRequested.emit()
+
+        app.applicationStateChanged.connect(on_state)
 
     backend.start()
     QTimer.singleShot(STARTUP_NOTICE_DELAY_MS, backend.flush_startup_notices)

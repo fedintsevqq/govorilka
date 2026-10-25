@@ -39,6 +39,7 @@ ApplicationWindow {
     property bool wasMaximized: false
     onVisibilityChanged: (mode) => { if (mode === Window.Maximized || mode === Window.Windowed) wasMaximized = mode === Window.Maximized }
     function showWindow() {
+        backend.setTrayMode(false)   // Mac: вернуть значок в Dock
         if (window.visibility === Window.Minimized || !window.visible)
             window.wasMaximized ? window.showMaximized() : window.showNormal()
         window.raise()
@@ -50,9 +51,10 @@ ApplicationWindow {
     onActiveChanged: if (active && backend.accessAvailable) backend.refreshAccess()
 
     onClosing: (close) => {
-        if (backend.trayAvailable) {   // Говорилка уходит в трей и продолжает слушать горячую клавишу
+        if (backend.trayAvailable && !backend.quitting) {   // Говорилка уходит в трей и продолжает слушать горячую клавишу
             close.accepted = false
             window.hide()
+            backend.setTrayMode(true)   // Mac: без значка в Dock, пока окно спрятано
             backend.noteHiddenToTray()
         } else {
             // трея нет (например, GNOME без индикаторов): окно некуда прятать, иначе программа осталась бы

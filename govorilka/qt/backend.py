@@ -169,6 +169,9 @@ class Backend(QObject):
         self._capturing = False
         self._tour_active = False
         self._ai_busy = False
+        self._access_busy: set[str] = set()
+        self._access_asked: set[str] = set()
+        self._quitting = False
         self._loading = False
         self._load_fraction = -1.0
         self._key_watchers: set[str] = set()
@@ -511,18 +514,27 @@ class Backend(QObject):
     def requestAccess(self, key: str) -> None:  # noqa: N802
         """Кнопка «Разрешить»: показать системный запрос (если macOS ещё не спрашивала), затем, если доступа так и нет,
         открыть нужный раздел настроек. Запрос ждёт ответа человека, поэтому идёт в фоне."""
-        if key not in {row[0] for row in permissions.ACCESS_ROWS}:
-            return
+        if key not in {row[0] for row in permissions.ACCESS_ROWS} or key in self._access_busy:
+            return  # неизвестная служба или запрос уже идёт (двойной щелчок)
+        self._access_busy.add(key)
+        first = key not in self._access_asked
+        self._access_asked.add(key)
 
         def work() -> None:
-            permissions.request(key)
-            self._access_done.emit(key)
+            if first:
+                permissions.request(key)
+            self._access_done.emit(key if first else f"open:{key}")
 
         threading.Thread(target=work, name=f"access-{key}", daemon=True).start()
 
-    def _on_access_done(self, key: str) -> None:
+    def _on_access_done(self, token: str) -> None:
+        key = token.removeprefix("open:")
+        self._access_busy.discard(key)
         self.accessChanged.emit()
-        if permissions.access_status().get(key) is not True:  # запрос не показался или был отклонён: включать вручную
+        status = permissions.access_status().get(key)
+        # первый щелчок только показывает системный запрос (раздел настроек поверх него мешал бы ответить);
+        # второй, или первый после отказа, открывает нужный раздел
+        if status is not True and (token.startswith("open:") or status is False and key in ("microphone", "automation")):
             pane = next(row[1] for row in permissions.ACCESS_ROWS if row[0] == key)
             QDesktopServices.openUrl(QUrl(permissions.privacy_link(pane)))
 
@@ -546,6 +558,26 @@ class Backend(QObject):
             return
         self.toast.emit("Разрешения сброшены, Говорилка закроется. Откройте её снова: система спросит о каждом доступе", "success")
         QTimer.singleShot(1800, self.quit)
+
+    quittingChanged = Signal()  # noqa: N815
+    quitting = Property(bool, lambda self: self._quitting, notify=quittingChanged)
+
+    def begin_quit(self) -> None:
+        """Cmd+Q и «Выйти» в Dock: закрытие окна в этот момент должно завершить программу, а не спрятать окно в трей."""
+        self._quitting = True
+        self.quittingChanged.emit()
+        QTimer.singleShot(1500, self._end_quit)  # если выход кто-то отменил, флаг не должен залипнуть
+
+    def _end_quit(self) -> None:
+        self._quitting = False
+        self.quittingChanged.emit()
+
+    @Slot(bool)
+    @safe_slot
+    def setTrayMode(self, hidden: bool) -> None:  # noqa: N802
+        """Окно спрятано в трей — на Mac это приложение строки меню без значка в Dock; окно показано — обычное."""
+        if sys.platform == "darwin" and QGuiApplication.platformName() == "cocoa":
+            mac_overlay.set_activation_policy(accessory=hidden)
 
     @Slot(QObject)
     @safe_slot

@@ -7,7 +7,7 @@ import ctypes.util
 
 
 def runtime():  # noqa: ANN201
-    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc") or "/usr/lib/libobjc.A.dylib")
     objc.sel_registerName.restype = ctypes.c_void_p
     objc.sel_registerName.argtypes = [ctypes.c_char_p]
     objc.objc_getClass.restype = ctypes.c_void_p

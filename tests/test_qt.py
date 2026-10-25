@@ -589,11 +589,12 @@ def test_mac_overlay_sets_the_three_window_properties_in_order():
         return 1234 if selector == "window" else None
 
     assert mac_overlay.apply(77, send=send)
-    assert [c[0] for c in calls] == ["window", "setHidesOnDeactivate:", "setCollectionBehavior:", "setLevel:"]
-    assert calls[1][1] == (False,)  # не прятать, когда приложение неактивно
-    behavior = calls[2][1][0]
+    assert [c[0] for c in calls] == ["window", "styleMask", "setStyleMask:", "setHidesOnDeactivate:", "setCollectionBehavior:", "setLevel:"]
+    assert calls[2][1][0] & mac_overlay.NONACTIVATING_PANEL  # панель не активирует приложение
+    assert calls[3][1] == (False,)  # не прятать, когда приложение неактивно
+    behavior = calls[4][1][0]
     assert behavior & mac_overlay.CAN_JOIN_ALL_SPACES and behavior & mac_overlay.FULL_SCREEN_AUXILIARY
-    assert calls[3][1] == (mac_overlay.LEVEL_POP_UP_MENU,)
+    assert calls[5][1] == (mac_overlay.LEVEL_POP_UP_MENU,)
 
 
 def test_mac_overlay_never_breaks_the_app():
@@ -651,26 +652,61 @@ def test_microphone_and_automation_statuses_are_decoded():
     assert permissions.decode_automation(-1744) is None and permissions.decode_automation(-600) is None
 
 
-def test_allow_button_asks_first_then_opens_the_pane_only_if_still_not_granted(backend, qapp, monkeypatch):
+def test_allow_button_first_asks_then_opens_the_pane_on_the_next_click(backend, qapp, monkeypatch):
+    from conftest import pump
+
     from govorilka import permissions
     from govorilka.qt import backend as backend_module
-    from conftest import pump
 
     asked, opened = [], []
     monkeypatch.setattr(permissions, "request", asked.append)
     monkeypatch.setattr(backend_module.QDesktopServices, "openUrl", staticmethod(lambda url: opened.append(url.toString())))
-    monkeypatch.setattr(permissions, "access_status", lambda: {"screen": False})
+    monkeypatch.setattr(permissions, "access_status", lambda: {"screen": False, "microphone": True})
+    backend.requestAccess("screen")
+    assert pump(qapp, lambda: asked == ["screen"])
+    pump(qapp, lambda: False, timeout=0.3)
+    assert opened == []  # системный запрос на экране: раздел настроек поверх него не открываем
     backend.requestAccess("screen")
     assert pump(qapp, lambda: opened)
-    assert asked == ["screen"] and opened[0].endswith("Privacy_ScreenCapture")
+    assert asked == ["screen"] and opened[0].endswith("Privacy_ScreenCapture")  # запрос не повторяется, открылся нужный раздел
     opened.clear()
-    monkeypatch.setattr(permissions, "access_status", lambda: {"microphone": True})
-    backend.requestAccess("microphone")
+    backend.requestAccess("microphone")  # разрешили в ответ на запрос — настройки не нужны
     assert pump(qapp, lambda: asked.count("microphone") == 1)
     pump(qapp, lambda: False, timeout=0.3)
-    assert opened == []  # разрешили в ответ на запрос: раздел настроек открывать не нужно
+    assert opened == []
     backend.requestAccess("нет-такого")  # неизвестная служба игнорируется
     assert "нет-такого" not in asked
+
+
+def test_denied_microphone_opens_the_pane_right_after_the_prompt_was_refused(backend, qapp, monkeypatch):
+    from conftest import pump
+
+    from govorilka import permissions
+    from govorilka.qt import backend as backend_module
+
+    opened = []
+    monkeypatch.setattr(permissions, "request", lambda key: None)
+    monkeypatch.setattr(backend_module.QDesktopServices, "openUrl", staticmethod(lambda url: opened.append(url.toString())))
+    monkeypatch.setattr(permissions, "access_status", lambda: {"microphone": False})
+    backend.requestAccess("microphone")
+    assert pump(qapp, lambda: opened) and opened[0].endswith("Privacy_Microphone")
+
+
+def test_quit_request_lets_the_window_close_instead_of_hiding_to_tray(backend, qapp):
+    assert backend.quitting is False
+    backend.begin_quit()
+    assert backend.quitting is True  # окно в этот момент закрывается по-настоящему
+    backend._end_quit()
+    assert backend.quitting is False
+
+
+def test_autostart_refuses_a_path_that_will_not_exist_after_reboot():
+    from govorilka import autostart
+
+    assert autostart.unstable_location("/private/var/folders/x/AppTranslocation/ABC/d/Govorilka.app/Contents/MacOS/Govorilka")
+    assert autostart.unstable_location("/Volumes/Govorilka/Govorilka.app/Contents/MacOS/Govorilka")
+    assert not autostart.unstable_location("/Applications/Govorilka.app/Contents/MacOS/Govorilka")
+
 
 
 def test_loading_indicator_follows_the_download_status(backend, qapp):

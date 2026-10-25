@@ -110,9 +110,14 @@ jobs:
         run: echo "GOVORILKA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
         if: startsWith(github.ref, 'refs/tags/v')
       - name: Build app
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
           pyinstaller --noconfirm --clean govorilka.spec
-          codesign --force --deep --sign - dist/Govorilka.app
+          # помощник захвата звука должен лежать внутри приложения: иначе запись не запустится
+          find dist/Govorilka.app -name govorilka-audiotap -type f | grep . || { echo "::error::нет govorilka-audiotap в приложении"; exit 1; }
+          bash tools/mac_sign.sh dist/Govorilka.app
       - name: Self-test app (real model on test speech)
         run: |
           set +e
@@ -134,7 +139,13 @@ jobs:
           mkdir dmg
           cp -R dist/Govorilka.app dmg/
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "Govorilka" -srcfolder dmg -ov -format UDZO "dist/$name"
+          # macOS иногда отвечает «Resource busy»: отмонтируем остатки и пробуем ещё
+          hdiutil detach /Volumes/Govorilka -force 2>/dev/null || true
+          for attempt in 1 2 3 4 5; do
+            hdiutil create -volname "Govorilka" -srcfolder dmg -ov -format UDZO "dist/$name" && break
+            echo "hdiutil: попытка $attempt не удалась"; sleep $((attempt * 5))
+            [ "$attempt" = 5 ] && exit 1
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}

@@ -35,6 +35,12 @@ def launch_command() -> list[str]:
     return [executable, "-m", "govorilka", BACKGROUND_FLAG]
 
 
+def unstable_location(executable: str) -> bool:
+    """Приложение запущено прямо из образа диска или из временной копии macOS (App Translocation): после
+    перезагрузки этого пути не будет, и автозапуск сломался бы молча."""
+    return "/AppTranslocation/" in executable or executable.startswith("/Volumes/")
+
+
 def launch_agent_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_ID}.plist"
 
@@ -114,6 +120,8 @@ def set_enabled(
     if sys.platform == "win32":
         _set_windows(enabled, command, run_key)
     elif sys.platform == "darwin":
+        if enabled and unstable_location(command[0]):
+            raise OSError("Перетащите Говорилку в «Программы» и запустите оттуда: из образа диска или временной копии автозапуск после перезагрузки не найдёт программу")
         _set_mac(enabled, command, agent_path or launch_agent_path())
     else:
         raise OSError("Автозапуск поддерживается только на Windows и macOS")

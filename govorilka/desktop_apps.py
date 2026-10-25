@@ -95,7 +95,7 @@ def _windows_scheme_registered(scheme: str) -> bool:
 def _windows_app_id(app: DesktopApp) -> str | None:
     """Идентификатор приложения в меню «Пуск» (и Microsoft Store, и обычные программы, на любом диске)."""
     script = (
-        f"Get-StartApps | Where-Object {{ $_.Name -eq '{app.windows_name}' }} "
+        f"Get-StartApps | Where-Object {{ $_.Name -like '{app.windows_name}*' -and $_.Name -notlike '*Uninstall*' }} "
         "| Select-Object -First 1 -ExpandProperty AppID"
     )
     try:

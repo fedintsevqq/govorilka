@@ -28,7 +28,30 @@ STATIONARY = 1 << 4
 IGNORES_CYCLE = 1 << 6
 FULL_SCREEN_AUXILIARY = 1 << 8
 BEHAVIOR = CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY
+NONACTIVATING_PANEL = 1 << 7  # NSWindowStyleMaskNonactivatingPanel
 LEVEL_POP_UP_MENU = 101  # NSPopUpMenuWindowLevel: над полноэкранным окном
+
+
+ACTIVATION_REGULAR, ACTIVATION_ACCESSORY = 0, 1  # NSApplicationActivationPolicy
+
+
+def set_activation_policy(accessory: bool) -> bool:
+    """macOS: пока окно спрятано в трей, Говорилка — приложение строки меню (без значка в Dock и без привязки к рабочему
+    столу: меню по горячей клавише появляется над полноэкранным окном и не перебрасывает на другой стол). Когда окно
+    показывают, снова обычное приложение. Любая ошибка проглатывается."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        objc = objc_bridge.runtime()
+        app = objc_bridge.send(objc, objc.objc_getClass(b"NSApplication"), "sharedApplication")
+        policy = ACTIVATION_ACCESSORY if accessory else ACTIVATION_REGULAR
+        ok = bool(objc_bridge.send(objc, app, "setActivationPolicy:", ctypes.c_bool, (ctypes.c_long,), (policy,)))
+        if ok and not accessory:
+            objc_bridge.send(objc, app, "activateIgnoringOtherApps:", None, (ctypes.c_bool,), (True,))
+        return ok
+    except Exception:  # noqa: BLE001
+        log.exception("Не переключил политику активации")
+        return False
 
 
 def apply(view_id: int, send=None) -> bool:  # noqa: ANN001
@@ -45,6 +68,9 @@ def apply(view_id: int, send=None) -> bool:  # noqa: ANN001
         window = send(view_id, "window")
         if not window:
             return False
+        # панель без активации приложения: меню над полноэкранным окном не должно переключать рабочий стол
+        style = send(window, "styleMask", ctypes.c_ulong)
+        send(window, "setStyleMask:", None, (ctypes.c_ulong,), ((style or 0) | NONACTIVATING_PANEL,))
         send(window, "setHidesOnDeactivate:", None, (ctypes.c_bool,), (False,))
         send(window, "setCollectionBehavior:", None, (ctypes.c_ulong,), (BEHAVIOR,))
         send(window, "setLevel:", None, (ctypes.c_long,), (LEVEL_POP_UP_MENU,))
