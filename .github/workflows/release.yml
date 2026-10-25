@@ -145,7 +145,14 @@ jobs:
           cat ci-data/selftest-live.txt 2>/dev/null
           echo "--- crash.log"; cat ci-data/crash.log 2>/dev/null
           echo "--- log"; tail -n 60 ci-data/govorilka.log 2>/dev/null
-          [ "$code" = 0 ] && grep -q '^OK' ci-data/selftest-live.txt
+          if [ "$code" = 0 ] && grep -q '^OK' ci-data/selftest-live.txt; then exit 0; fi
+          echo "=== повтор без опроса клавиатуры: виновата ли она"
+          rm -f ci-data/selftest-live.txt
+          GOVORILKA_LIVE_NO_KEYBOARD=1 dist/Govorilka.app/Contents/MacOS/Govorilka --selftest-live
+          echo "без клавиатуры: код $?"; cat ci-data/selftest-live.txt 2>/dev/null
+          echo "--- crash.log"; tail -n 60 ci-data/crash.log 2>/dev/null
+          echo "--- log"; tail -n 40 ci-data/govorilka.log 2>/dev/null
+          exit 1
       - name: Build dmg
         run: |
           suffix=$([ "$GOVORILKA_ARCH" = arm64 ] && echo apple-silicon || echo intel)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -116,6 +117,9 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
 
     def click_all(window: QQuickWindow, where: str) -> None:
         for label, item in buttons(window)[:40]:
+            log.info("Самопроверка: жму «%s» (%s)", label, where)  # до нажатия: если упадёт, в журнале видно, на чём
+            for handler in logging.getLogger().handlers:
+                handler.flush()
             press(window, item.mapToScene(item.boundingRect().center()))
             clicked.append(f"{where}: {label}")
             for _ in range(10):
@@ -137,6 +141,11 @@ def _live_check(app: QApplication, root: QQuickWindow, backend: Backend) -> None
         report.write_text("OK\n" + "\n".join(clicked) + "\n", encoding="utf-8")
         log.info("Самопроверка в окне: нажато кнопок — %d", len(clicked))
 
+    if os.environ.get("GOVORILKA_LIVE_NO_KEYBOARD"):  # вторая проверка: без опроса клавиатуры совсем
+        backend.controller.hotkeys.set_chord(None)
+        backend.controller.hotkeys.set_dictation_chord(None)
+        backend._get_keyboard = lambda: (_ for _ in ()).throw(OSError("опрос клавиатуры выключен для проверки"))
+        log.info("Самопроверка: опрос клавиатуры выключен")
     QTimer.singleShot(3000, step)
     QTimer.singleShot(20000, app.quit)
 
