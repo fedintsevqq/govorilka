@@ -14,7 +14,7 @@ ColumnLayout {
     Timer {   // человек включает переключатель в Системных настройках — статус обновляется сам
         interval: 1500
         repeat: true
-        running: rows.visible && backend.accessAvailable
+        running: rows.visible && backend.accessAvailable && backend.liveFlags.indexOf("noaccesstimer") < 0
         onTriggered: backend.refreshAccess()
     }
 

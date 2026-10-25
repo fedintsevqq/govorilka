@@ -12,6 +12,7 @@ import re
 import logging
 import shutil
 import math
+import os
 import sys
 import threading
 import time
@@ -254,6 +255,7 @@ class Backend(QObject):
         self._keyboard: Keyboard | None = None
         self._tray_available = False
         self._startup_notices: list[str] = []
+        self._access_status: dict[str, bool | None] | None = None
         self._whats_new_since = ""
         self._install_error = ""
 
@@ -1163,7 +1165,9 @@ class Backend(QObject):
     def _get_access(self) -> list[dict[str, object]]:
         if sys.platform != "darwin":
             return []
-        status = permissions.access_status()
+        if self._access_status is None:  # спрашиваем macOS один раз на обновление, а не на каждую привязку в окне
+            self._access_status = permissions.access_status()
+        status = self._access_status
         return [
             {"id": key, "pane": pane, "label": label, "hint": hint, "granted": status.get(key)}
             for key, pane, label, hint in permissions.ACCESS_ROWS
@@ -1175,7 +1179,16 @@ class Backend(QObject):
     @Slot()
     @safe_slot
     def refreshAccess(self) -> None:  # noqa: N802
+        """Таймер в окне: статус изменился — перерисовать строки. Не изменился — не трогать (строки не пересоздаются)."""
+        if sys.platform != "darwin":
+            return
+        fresh = permissions.access_status()
+        if fresh == self._access_status:
+            return
+        self._access_status = fresh
         self.accessChanged.emit()
+
+    liveFlags = Property(str, lambda self: os.environ.get("GOVORILKA_LIVE_FLAGS", ""), constant=True)  # noqa: N815 — поиск сбоев в CI
 
     _access_done = Signal(str)
 
@@ -1209,6 +1222,7 @@ class Backend(QObject):
     def _on_access_done(self, token: str) -> None:
         key = token.removeprefix("open:")
         self._access_busy.discard(key)
+        self._access_status = None  # человек мог только что выдать доступ: перечитать
         self.accessChanged.emit()
         status = permissions.access_status().get(key)
         # первый щелчок только показывает системный запрос (раздел настроек поверх него мешал бы ответить);

@@ -586,7 +586,7 @@ Window {
                                     id: apiKeyField
                                     anchors.fill: parent
                                     leftPadding: 14
-                                    echoMode: TextInput.Password
+                                    echoMode: backend.liveFlags.indexOf("nopassword") >= 0 ? TextInput.Normal : TextInput.Password
                                     color: Theme.text
                                     placeholderText: backend.assistantKeySaved ? "Ключ сохранён. Введите новый, чтобы заменить" : "Ключ API"
                                     placeholderTextColor: Theme.textTertiary
