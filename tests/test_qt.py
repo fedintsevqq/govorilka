@@ -931,8 +931,15 @@ def feed(qapp):
     assert window is not None, component.errorString()
     pump(qapp, lambda: False, timeout=0.5)
     yield window, model
+    # Окно удаляем сразу и раньше движка: иначе отложенное удаление дошло бы до окна уже без движка — падение в другом тесте.
+    from PySide6.QtCore import QEvent
+
     window.close()
     window.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    del window, component
+    engine.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def bodies(window):
