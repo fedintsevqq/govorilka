@@ -156,11 +156,12 @@ jobs:
           }
           run_live GOVORILKA_LIVE_MODE=props
           run_live GOVORILKA_LIVE_MODE=settings
-          run_live GOVORILKA_LIVE_MODE=settings QSG_RENDER_LOOP=basic
+          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_ACCESS=1
+          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_MIC_STATUS=1
+          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_KEYBOARD=1
           run_live GOVORILKA_LIVE_MODE=guide
           run_live GOVORILKA_LIVE_MODE=main
           run_live GOVORILKA_LIVE_MODE=all
-          run_live GOVORILKA_LIVE_MODE=all QSG_RENDER_LOOP=basic
           exit $failed
       - name: Build dmg
         run: |

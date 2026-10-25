@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import logging
 import subprocess
 import sys
@@ -130,12 +131,12 @@ def _automation_code() -> int | None:
 def access_status() -> dict[str, bool | None]:
     """Что macOS уже разрешила Говорилке. True — разрешено, False — нет, None — ещё не спрашивали (или не узнать).
     Вне macOS все значения None."""
-    if sys.platform != "darwin":
+    if sys.platform != "darwin" or os.environ.get("GOVORILKA_LIVE_NO_ACCESS"):  # второе — для поиска сбоя в CI
         return {key: None for key, *_ in ACCESS_ROWS}
     from govorilka.hotkeys import input_monitoring_status
 
     return {
-        "microphone": decode_microphone(_microphone_code()),
+        "microphone": None if os.environ.get("GOVORILKA_LIVE_NO_MIC_STATUS") else decode_microphone(_microphone_code()),
         "screen": _call_bool(CORE_GRAPHICS, "CGPreflightScreenCaptureAccess"),
         "input": input_monitoring_status(),
         "accessibility": _call_bool(APPLICATION_SERVICES, "AXIsProcessTrusted"),
