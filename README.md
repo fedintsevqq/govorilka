@@ -323,3 +323,6 @@ git tag v0.3.0 && git push origin v0.3.0
 
 Модели и настройки собранное приложение хранит в `%LOCALAPPDATA%\Govorilka` (Windows) или `~/Library/Application Support/Govorilka` (Mac). Там же лежит `govorilka.log`.
 
+## Лицензия
+
+[MIT](LICENSE). Модели распознавания и итогов скачиваются отдельно и идут под своими лицензиями (указаны в карточках в настройках).

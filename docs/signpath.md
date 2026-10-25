@@ -6,8 +6,7 @@
 
 ## Что нужно до заявки
 
-1. **Открытая лицензия в репозитории** (файл `LICENSE`): MIT, Apache 2.0, GPL или другая из списка OSI. Сейчас её нет —
-   без неё заявку не примут.
+1. **Открытая лицензия в репозитории** — есть: MIT (файл `LICENSE`).
 2. **Политика подписи в README** — короткий раздел (текст ниже): кто подписывает, кто может выпускать релизы.
 3. **Сборка в GitHub Actions** — уже есть (`.github/workflows/release.yml`). После одобрения добавляется шаг
    `signpath/github-action-submit-signing-request`, и `.exe` подписывается при каждом релизе.
@@ -29,7 +28,7 @@
 
 - **Project name:** Govorilka
 - **Repository:** https://github.com/fedintsevqq/govorilka
-- **License:** _(выбранная лицензия)_
+- **License:** MIT
 - **Description:** Govorilka is a free desktop app for Windows and macOS that transcribes calls and audio files
   locally. It records the microphone and the system audio, recognizes Russian speech with the open GigaAM model
   (onnx-asr), separates speakers, saves Markdown transcripts and can summarize a call with a local LLM
