@@ -531,6 +531,7 @@ ApplicationWindow {
                     onRenameRequested: (voiceId, name, tint) => renameSheet.ask(voiceId, name, tint)
                     onCopyRequested: (startRow, startPos, endRow, endPos) => backend.copySelection(startRow, startPos, endRow, endPos)
                     onCopyAllRequested: backend.copyTranscript()
+                    onEditMarkRequested: (row, text) => markSheet.ask(row, text)
                 }
             }
         }
@@ -561,6 +562,7 @@ ApplicationWindow {
 
     PermissionSheet { id: permissionSheet }
     RenameSheet { id: renameSheet }
+    MarkSheet { id: markSheet }
 
     Onboarding { id: tour }
     FeatureGuide { id: featureGuide }

@@ -145,10 +145,29 @@ def main(out: Path) -> None:
             backend._set_status("Скачиваю обновление: 61 из 168 МБ (36%)")
         backend.updateChanged.emit()
 
+    import math
+    import random
+
+    voice = QTimer()
+    voice.setInterval(100)
+    tick_count = [0]
+
+    def voice_tick() -> None:   # «говорим»: слоги с паузами, как настоящая речь
+        tick_count[0] += 1
+        syllable = max(0.0, math.sin(tick_count[0] * 0.9)) * (0.55 + 0.45 * random.random())
+        backend._dictation_level = min(1.0, 0.1 + syllable)
+        backend.dictationLevelChanged.emit()
+
+    voice.timeout.connect(voice_tick)
+
     def dictation(phase: str, level: float = 0.0, note: str = "") -> None:
         backend._on_dictation(phase)
-        backend._dictation_level = level
-        backend.dictationLevelChanged.emit()
+        if phase == "listening" and level > 0.5:
+            voice.start()
+        else:
+            voice.stop()
+            backend._dictation_level = level
+            backend.dictationLevelChanged.emit()
         backend._dictation_note = note
         backend.dictationChanged.emit()
 

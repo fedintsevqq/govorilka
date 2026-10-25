@@ -12,6 +12,7 @@ Item {
     property string hotkeyLabel: ""
     property bool recording: false
     signal renameRequested(string voiceId, string name, color tint)
+    signal editMarkRequested(int row, string text)
     signal copyRequested(int startRow, int startPos, int endRow, int endPos)
     signal copyAllRequested()
 
@@ -60,8 +61,10 @@ Item {
             return y >= list.height / 2 ? { row: list.count - 1, pos: endOfRow, header: false } : { row: 0, pos: 0, header: false }
         const loader = list.itemAtIndex(index)
         const row = loader ? loader.item : null
-        if (!row || !row.body)   // отметка или пауза: строка выделяется целиком
-            return { row: index, pos: x > list.width / 2 ? endOfRow : 0, header: false }
+        if (!row || !row.body) {   // отметка или пауза: строка выделяется целиком, а по самой отметке можно щёлкнуть
+            const onChip = !!(row && row.chip && row.chip.contains(row.chip.mapFromItem(list, x, y)))
+            return { row: index, pos: x > list.width / 2 ? endOfRow : 0, header: false, mark: onChip, text: onChip ? row.markText : "" }
+        }
         const inBody = row.body.mapFromItem(list, x, y)
         if (inBody.y < 0) {
             const onName = row.header.visible && row.header.contains(row.header.mapFromItem(list, x, y))
@@ -132,6 +135,7 @@ Item {
         preventStealing: true
         property real lastX: 0
         property real lastY: 0
+        property var pendingMark: null
         function extend(x, y) {
             lastX = x; lastY = y
             const p = root.hit(x, y)
@@ -146,13 +150,19 @@ Item {
                 return
             }
             if (p && p.header) { mouse.accepted = false; return }   // нажали на имя: это кнопка «подписать»
+            if (p && p.mark) { pendingMark = { row: p.row, text: p.text, x: mouse.x, y: mouse.y }; root.forceActiveFocus(); return }   // отметка — как кнопка
             root.forceActiveFocus()   // забираем фокус у полей ввода, чтобы Ctrl+C достался ленте
             if (!p) { root.clearSelection(); return }
             if ((mouse.modifiers & Qt.ShiftModifier) && root.aRow >= 0) { extend(mouse.x, mouse.y); return }
             root.aRow = p.row; root.aPos = p.pos; root.bRow = p.row; root.bPos = p.pos
             lastX = mouse.x; lastY = mouse.y
         }
-        onPositionChanged: (mouse) => { if (pressedButtons & Qt.LeftButton) extend(mouse.x, mouse.y) }
+        onPositionChanged: (mouse) => { if (pressedButtons & Qt.LeftButton && !pendingMark) extend(mouse.x, mouse.y) }
+        onReleased: (mouse) => {
+            const mark = pendingMark
+            pendingMark = null
+            if (mark && Math.abs(mouse.x - mark.x) < 6 && Math.abs(mouse.y - mark.y) < 6) root.editMarkRequested(mark.row, mark.text)   // щёлкнули, а не потянули
+        }
         onDoubleClicked: (mouse) => {   // двойной щелчок — слово
             const p = root.hit(mouse.x, mouse.y)
             if (!p || p.header) return
@@ -315,18 +325,24 @@ Item {
         Item {
             id: markItem
             readonly property Item row: parent
+            property alias chip: chipBox
+            readonly property string markText: row.text
             width: parent.width
             implicitHeight: 44
             Rectangle { anchors.fill: parent; anchors.leftMargin: 50; anchors.rightMargin: 20; radius: 8; color: root.selectionTint; visible: root.rowSelected(markItem.row.index) }
             Accessible.role: Accessible.StaticText
             Accessible.name: "Отметка " + row.time + ": " + row.text
             Rectangle {
+                id: chipBox
+                objectName: "markChip"
                 x: 58; anchors.verticalCenter: parent.verticalCenter
                 height: 30
                 width: Math.min(markContent.implicitWidth + 30, markItem.width - 80)
                 radius: 15
-                color: Theme.markSoft
-                border.color: Qt.rgba(Theme.mark.r, Theme.mark.g, Theme.mark.b, 0.35)
+                color: chipHover.hovered ? Qt.rgba(Theme.mark.r, Theme.mark.g, Theme.mark.b, 0.2) : Theme.markSoft
+                border.color: Qt.rgba(Theme.mark.r, Theme.mark.g, Theme.mark.b, chipHover.hovered ? 0.6 : 0.35)
+                HoverHandler { id: chipHover; cursorShape: Qt.PointingHandCursor }
+                Tip { text: "Нажмите, чтобы подписать отметку своими словами"; shown: chipHover.hovered }
                 Row {
                     id: markContent
                     anchors.centerIn: parent
@@ -334,6 +350,7 @@ Item {
                     Icon { name: "star"; size: 15; color: Theme.mark; anchors.verticalCenter: parent.verticalCenter }
                     Text { id: markLabel; text: markItem.row.text; width: Math.min(implicitWidth, markItem.width - 200); elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: Theme.mark; anchors.verticalCenter: parent.verticalCenter }
                     Text { text: markItem.row.time; font.pixelSize: Theme.fontMeta; color: Theme.textTertiary; anchors.verticalCenter: parent.verticalCenter }
+                    Icon { visible: chipHover.hovered; name: "edit"; size: 13; color: Theme.mark; anchors.verticalCenter: parent.verticalCenter }
                 }
             }
         }

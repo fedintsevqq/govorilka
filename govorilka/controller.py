@@ -434,6 +434,18 @@ class Controller:
         self.listener.on_status("Момент отмечен ★")
         return True
 
+    def edit_mark(self, utterance: object, text: str | None) -> bool:
+        """Подписать отметку своими словами («обсуждали баг по оплате») или убрать её (text=None)."""
+        if not self.transcript:
+            return False
+        if self.state in (AppState.STOPPING, AppState.FILE, AppState.STARTING):
+            self.listener.on_error("Идёт обработка записи. Измените отметку через секунду.")
+            return False
+        changed = self.transcript.edit_note(utterance, text)  # type: ignore[arg-type]
+        if changed and not self.save_now():
+            self.listener.on_error("Отметка изменилась в ленте, но файл сохранить не получилось: проверьте место на диске.")
+        return changed
+
     def elapsed(self) -> float:
         return self.session.elapsed() if self.session else 0.0
 

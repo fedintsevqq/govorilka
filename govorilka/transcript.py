@@ -66,6 +66,20 @@ class Transcript:
                 utterance = replace(utterance, speaker=name)
             self._items = sorted([*self._items, utterance], key=lambda u: u.start)
 
+    def edit_note(self, old: Utterance, text: str | None) -> bool:
+        """Меняет текст отметки или убирает её (text=None). Работает только с отметками и заметками, не с репликами людей."""
+        with self._lock:
+            for index, item in enumerate(self._items):
+                if item is old or item == old:
+                    if item.source not in (SOURCE_MARK, SOURCE_NOTE):
+                        return False
+                    if text is None:
+                        del self._items[index]
+                    else:
+                        self._items[index] = replace(item, text=text)
+                    return True
+        return False
+
     def relabel(self, source: str, labels: dict[float, str]) -> int:
         """Переподписывает прошлые реплики источника после пересчёта голосов (ключ — время начала реплики).
 

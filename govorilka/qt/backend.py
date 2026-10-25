@@ -984,6 +984,31 @@ class Backend(QObject):
         self.toast.emit("Готово. Откройте Говорилку заново и разрешите доступ.", "success")
         QTimer.singleShot(1500, QGuiApplication.quit)
 
+    @Slot(int, str)
+    @safe_slot
+    def editMark(self, row: int, text: str) -> None:  # noqa: N802
+        """Подписать отметку своими словами. Пустой текст возвращает прежнюю подпись «Отметка»."""
+        item = self._mark_at(row)
+        if item is None:
+            return
+        if self.controller.edit_mark(item, text.strip() or "Отметка"):
+            self._refresh()  # сразу: следующая правка должна видеть уже новую строку, а не прежнюю
+            self.toast.emit("Отметка обновлена, в файле тоже", "success")
+
+    @Slot(int)
+    @safe_slot
+    def deleteMark(self, row: int) -> None:  # noqa: N802
+        item = self._mark_at(row)
+        if item is not None and self.controller.edit_mark(item, None):
+            self._refresh()
+            self.toast.emit("Отметка убрана", "success")
+
+    def _mark_at(self, row: int) -> object | None:
+        rows = self._model.rows
+        if not 0 <= row < len(rows) or rows[row].kind != "mark":
+            return None
+        return rows[row].key
+
     @Slot(str, str)
     @safe_slot
     def renameSpeaker(self, voice_id: str, name: str) -> None:  # noqa: N802

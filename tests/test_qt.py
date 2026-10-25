@@ -1068,3 +1068,93 @@ def test_catalog_refuses_to_delete_the_chosen_model_and_deletes_another(backend,
     monkeypatch.setattr(asr_models, "parse", lambda key: real_parse(key).__class__(**{**real_parse(key).__dict__, "local_dir": folder}))
     backend.deleteModel("alphacep/vosk-model-small-ru@int8")
     assert not folder.exists() and "освобождено 1 МБ" in toasts[-1]
+
+
+# ---------- подпись отметки ----------
+
+
+def marked_backend(backend, tmp_path):
+    transcript = Transcript(datetime(2026, 1, 1), "Тема")
+    transcript.add(speech("Я", 1, "Привет", "mic"))
+    transcript.add(Utterance("", 5, "Отметка", 5, SOURCE_MARK))
+    transcript.add(Utterance("", 9, "Пауза", 9, SOURCE_NOTE))
+    backend._on_transcript(transcript, tmp_path / "созвон.md")
+    backend.controller.transcript = transcript
+    backend.controller.last_file = tmp_path / "созвон.md"
+    backend._refresh()
+    return transcript
+
+
+def test_a_mark_can_be_signed_in_your_own_words_and_the_file_follows(backend, tmp_path):
+    transcript = marked_backend(backend, tmp_path)
+    row = next(i for i, r in enumerate(backend._model.rows) if r.kind == "mark")
+    backend.editMark(row, "договорились про срок")
+    assert [u.text for u in transcript.utterances if u.source == SOURCE_MARK] == ["договорились про срок"]
+    assert "★ договорились про срок" in (tmp_path / "созвон.md").read_text(encoding="utf-8")
+    backend.editMark(row, "   ")  # пусто — прежняя подпись
+    assert [u.text for u in transcript.utterances if u.source == SOURCE_MARK] == ["Отметка"]
+
+
+def test_a_mark_can_be_removed_but_a_persons_line_and_a_pause_cannot(backend, tmp_path):
+    transcript = marked_backend(backend, tmp_path)
+    kinds = [r.kind for r in backend._model.rows]
+    backend.editMark(kinds.index("speech"), "взлом")  # реплику человека так не меняем
+    backend.editMark(kinds.index("note"), "взлом")  # паузу тоже
+    assert [u.text for u in transcript.utterances if u.source != SOURCE_MARK] == ["Привет", "Пауза"]
+    backend.deleteMark(kinds.index("mark"))
+    assert not [u for u in transcript.utterances if u.source == SOURCE_MARK]
+    assert "★" not in (tmp_path / "созвон.md").read_text(encoding="utf-8")
+
+
+def test_clicking_the_mark_in_the_feed_asks_to_edit_it_but_dragging_does_not(qapp):
+    from PySide6.QtCore import QPoint, QPointF, QUrl, Qt
+    from PySide6.QtQml import QQmlComponent, QQmlEngine
+    from PySide6.QtTest import QTest
+
+    from govorilka.config import QML_DIR
+
+    model = TranscriptModel()
+    model.update([speech("Я", 1, "Привет"), Utterance("", 5, "договорились про срок", 5, SOURCE_MARK)], [])
+    engine = QQmlEngine()
+    engine.addImportPath(str(QML_DIR))
+    engine.rootContext().setContextProperty("feedModel", model)
+    component = QQmlComponent(engine)
+    component.setData(
+        f'import QtQuick\nimport QtQuick.Window\nimport "{QUrl.fromLocalFile(str(QML_DIR)).toString()}"\n'
+        'Window { width: 700; height: 500; visible: true\n'
+        '  property var asked: []\n'
+        '  TranscriptView { anchors.fill: parent; model: feedModel\n'
+        '    onEditMarkRequested: (row, text) => asked = [row, text] } }'.encode(),
+        QUrl.fromLocalFile(str(QML_DIR / "mark_test.qml")),
+    )
+    window = component.create()
+    assert window is not None, component.errorString()
+    pump(qapp, lambda: False, timeout=0.5)
+    try:
+        chip = next(i for i in bodies_all(window) if i.objectName() == "markChip")
+        point = chip.mapToScene(QPointF(chip.width() / 2, chip.height() / 2))
+        target = QPoint(int(point.x()), int(point.y()))
+        QTest.mouseMove(window, target, 10)
+        QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, target)
+        QTest.mouseMove(window, QPoint(target.x() + 60, target.y()), 10)  # потянули: это выделение, а не щелчок
+        QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, QPoint(target.x() + 60, target.y()))
+        pump(qapp, lambda: False, timeout=0.1)
+        assert not window.property("asked").toVariant()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, target)
+        assert pump(qapp, lambda: bool(window.property("asked").toVariant()))
+        assert window.property("asked").toVariant() == [1, "договорились про срок"]
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.sendPostedEvents(None, __import__("PySide6.QtCore", fromlist=["QEvent"]).QEvent.Type.DeferredDelete)
+        del window, component
+        engine.deleteLater()
+
+
+def bodies_all(window):
+    def walk(item):
+        yield item
+        for child in item.childItems():
+            yield from walk(child)
+
+    return list(walk(window.contentItem()))

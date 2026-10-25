@@ -48,24 +48,45 @@ Window {
                 Icon { anchors.centerIn: parent; name: "mic"; size: 17; color: "#FFFFFF" }
             }
 
-            Row {   // голос: полоски прыгают в такт речи
+            // Голос: волна бежит справа налево. Каждые 50 мс в правый край добавляется текущий уровень голоса,
+            // остальные полоски сдвигаются: видно, как звук «течёт». Тишина — ровные точки, голос — высокая волна.
+            Row {
                 id: bars
                 visible: pill.phase === "listening"
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 3
                 rightPadding: 6
+                property var history: new Array(18).fill(0)
+                property real smooth: 0
+                Timer {
+                    interval: 50
+                    repeat: true
+                    running: bars.visible
+                    onTriggered: {
+                        const level = Math.min(1, backend.dictationLevel * 1.15)
+                        // быстро вверх на звуке, плавно вниз на паузе: волна не дёргается
+                        bars.smooth = Math.max(level, bars.smooth * 0.82)
+                        // небольшая живость, чтобы ровный звук не рисовал забор
+                        const wobble = 0.82 + 0.18 * Math.sin(Date.now() / 90)
+                        const next = bars.history.slice(1)
+                        next.push(bars.smooth * wobble)
+                        bars.history = next
+                    }
+                    onRunningChanged: if (!running) { bars.history = new Array(18).fill(0); bars.smooth = 0 }
+                }
                 Repeater {
-                    model: [0.45, 0.8, 1.0, 0.7, 0.9, 0.55, 0.35]
+                    model: 18
                     Rectangle {
-                        required property real modelData
                         required property int index
+                        readonly property real v: bars.history[index] || 0
+                        // середина волны чуть выше краёв: получается «язычок», а не прямоугольник
+                        readonly property real shape: 0.55 + 0.45 * Math.sin(Math.PI * (index + 1) / 19)
                         anchors.verticalCenter: parent.verticalCenter
                         width: 3; radius: 1.5
-                        // ровная тишина — короткие точки; голос — высокие полоски с разной высотой
-                        height: Math.max(4, 24 * Math.min(1, backend.dictationLevel) * modelData)
+                        height: Math.max(4, 26 * v * shape)
                         color: Theme.accent
-                        opacity: 0.55 + 0.45 * modelData
-                        Behavior on height { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
+                        opacity: 0.4 + 0.6 * Math.min(1, v * 1.6)
+                        Behavior on height { NumberAnimation { duration: 60; easing.type: Easing.OutQuad } }
                     }
                 }
             }
