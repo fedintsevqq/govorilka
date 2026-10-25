@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 try:
     from govorilka._build_version import VERSION  # создаётся при сборке, в репозитории его нет
@@ -19,6 +20,11 @@ def parse(text: str) -> tuple[int, int, int] | None:
     return (int(match[1]), int(match[2]), int(match[3])) if match else None
 
 
+def is_trial_build() -> bool:
+    """Собранное приложение без номера версии: пробная сборка (например, из CI). Она новее любого выпуска, обновлять её нечем."""
+    return VERSION == "dev" and bool(getattr(sys, "frozen", False))
+
+
 def is_release() -> bool:
     """Собранное приложение с настоящим номером (а не запуск из исходников)."""
     return parse(VERSION) is not None
@@ -27,6 +33,6 @@ def is_release() -> bool:
 def is_newer(candidate: str, current: str = VERSION) -> bool:
     """candidate новее current? Номер текущей версии неизвестен (dev) — считаем её самой старой."""
     new = parse(candidate)
-    if new is None:
+    if new is None or (current == "dev" and is_trial_build()):
         return False
     return new > (parse(current) or (0, 0, 0))

@@ -120,7 +120,8 @@ def main(out: Path) -> None:
         (1, {}, "0-tour-2"),
         (1, {"menuSeen": True, "chosen": "record"}, "0-tour-2-done"),
         (2, {}, "0-tour-3"),
-        (3, {}, "0-tour-4"),
+        (3, {}, "0-tour-dictation"),
+        (4, {}, "0-tour-4"),
     ]:
         steps.append(lambda step=step, state=state: tour(step, **state))
         steps.append(lambda name=name: shoot(backend, root, out / f"{name}.png"))
@@ -180,6 +181,23 @@ def main(out: Path) -> None:
         steps.append(lambda state=state: summary_state(state))
         steps.append(lambda state=state: shoot(backend, root, out / f"9-summary-{state}.png"))
     steps.append(lambda: summary_state(""))
+    def guide(mode: str) -> None:
+        backend._whats_new_since = "0.3.2"
+        backend.settingsChanged.emit()
+        QMetaObject.invokeMethod(root.findChild(QObject, "featureGuide"), "show", Qt.ConnectionType.DirectConnection, Q_ARG("QVariant", mode))
+
+    for mode in ("new", "all"):
+        steps.append(lambda mode=mode: guide(mode))
+        steps.append(lambda mode=mode: shoot(backend, root, out / f"10-guide-{mode}.png"))
+        steps.append(lambda: invoke("featureGuide", "close"))
+    def install_error() -> None:
+        offer_update(False)
+        backend._install_error = "Говорилка запущена прямо из образа или карантина: перетащите её в «Программы» и откройте оттуда"
+        backend.updateChanged.emit()
+
+    steps.append(install_error)
+    steps.append(lambda: shoot(backend, root, out / "11-update-error.png"))
+    steps.append(lambda: (setattr(backend, "_install_error", ""), backend.updateChanged.emit()))
     steps.append(select_and_menu)
     steps.append(lambda: shoot(backend, root, out / "5-selection.png"))
     steps.append(lambda: invoke("feed", "clearSelection"))

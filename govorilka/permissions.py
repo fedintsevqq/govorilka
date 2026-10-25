@@ -142,6 +142,22 @@ def access_status() -> dict[str, bool | None]:
     }
 
 
+def signing_identity() -> str:
+    """Чем подписана запущенная программа: отпечаток постоянного сертификата, а у временной подписи — «adhoc-версия».
+    Пустая строка — не из .app или не удалось узнать."""
+    from govorilka import installer, version
+
+    app = installer.app_bundle()
+    if sys.platform != "darwin" or app is None:
+        return ""
+    try:
+        leaf = installer.leaf_hash(installer.designated_requirement(app))
+    except Exception:  # noqa: BLE001 — нет codesign или подпись нечитаема: ничего не сбрасываем
+        log.exception("Не прочитал подпись программы")
+        return ""
+    return leaf or f"adhoc-{version.VERSION}"
+
+
 def privacy_link(pane: str) -> str:
     """Ссылка на раздел «Конфиденциальность и безопасность» в Системных настройках."""
     return f"x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"

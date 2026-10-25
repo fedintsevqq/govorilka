@@ -117,6 +117,9 @@ class Settings:
     dictation_enabled: bool = True  # диктовка в любое поле: зажал комбинацию, сказал, отпустил — текст у курсора
     dictation_hotkey: str = DEFAULT_DICTATION_HOTKEY
     summary_model: str = "qwen3-4b"  # локальная модель итогов: см. govorilka/summary.py
+    autostart_initialized: bool = False  # при первой установке автозапуск включается один раз; дальше решает человек
+    last_seen_version: str = ""  # версия, на которой показывали «Что нового»
+    signing_id: str = ""  # Mac: чем подписана программа; сменилась подпись — разрешения macOS надо дать заново
     reduce_motion: bool = False  # вместо движения — короткое растворение
     theme: str = "system"  # system / dark / light
     check_updates: bool = True  # раз в сутки спрашивать у GitHub, не вышла ли новая версия

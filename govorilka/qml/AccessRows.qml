@@ -21,17 +21,19 @@ ColumnLayout {
     // итог сверху: сколько осталось, а когда всё зелёное — «Всё готово»
     Rectangle {
         Layout.fillWidth: true
-        implicitHeight: 34
+        implicitHeight: summaryRow.implicitHeight + 18   // высота по тексту: длинная подпись переносится и не вылезает за рамку
         radius: 12
         readonly property color tint: rows.allGranted ? Theme.success : Theme.accent
         color: Qt.rgba(tint.r, tint.g, tint.b, Theme.dark ? 0.14 : 0.10)
         border.color: Qt.rgba(tint.r, tint.g, tint.b, 0.35)
-        Row {
-            anchors.centerIn: parent
+        RowLayout {
+            id: summaryRow
+            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
             spacing: 8
-            Icon { name: rows.allGranted ? "check" : "bolt"; size: 15; color: parent.parent.tint; anchors.verticalCenter: parent.verticalCenter }
+            Icon { name: rows.allGranted ? "check" : "bolt"; size: 15; color: parent.parent.tint; Layout.alignment: Qt.AlignTop; Layout.topMargin: 1 }
             Text {
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
                 text: rows.allGranted ? "Всё готово: все разрешения выданы"
                     : "Осталось разрешить: " + rows.missing + " из " + backend.access.length + ". Нажмите «Разрешить», включите Говорилку и вернитесь сюда"
                 font.pixelSize: 12

@@ -10,7 +10,7 @@ Popup {
     objectName: "tour"
     property int step: 0
     // на Mac перед клавишей отдельный шаг про разрешения: без них горячая клавиша и запись звука не заработают
-    readonly property var keys: backend.accessAvailable ? ["intro", "access", "hotkey", "tray", "after"] : ["intro", "hotkey", "tray", "after"]
+    readonly property var keys: backend.accessAvailable ? ["intro", "access", "hotkey", "dictation", "tray", "after"] : ["intro", "hotkey", "dictation", "tray", "after"]
     readonly property int steps: keys.length
     readonly property string key: keys[step] || ""
     readonly property var opts: backend.settings
@@ -119,6 +119,7 @@ Popup {
             Page0 { visible: tour.key === "intro" }
             PageAccess { visible: tour.key === "access" }
             Page1 { visible: tour.key === "hotkey" }
+            PageDictation { visible: tour.key === "dictation" }
             Page2 { visible: tour.key === "tray" }
             Page3 { visible: tour.key === "after" }
         }
@@ -226,6 +227,60 @@ Popup {
         AccessRows {
             anchors.fill: parent
             compact: true
+        }
+    }
+
+    // Диктовка в любое поле
+    component PageDictation: Page {
+        title: "Диктовка в любое поле"
+        body: "Зажмите <b>" + String(tour.opts.dictationLabel) + "</b> и говорите. Отпустите — текст появится там, где стоит курсор: в браузере, Claude, Discord, Telegram, Word. Внизу экрана видна плашка с голосом. Комбинацию можно поменять в настройках."
+        Column {
+            anchors.centerIn: parent
+            spacing: 18
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 10
+                Repeater {
+                    model: String(tour.opts.dictationLabel).split(" + ")
+                    BigKey { required property string modelData; label: modelData }
+                }
+            }
+            Rectangle {   // плашка, как она выглядит внизу экрана
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 190; height: 44; radius: 22
+                color: Theme.glass
+                border.color: Theme.shellLine
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: 8
+                    spacing: 10
+                    Rectangle {
+                        width: 30; height: 30; radius: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0; color: Theme.accentA }
+                            GradientStop { position: 1; color: Theme.accentB }
+                        }
+                        Icon { anchors.centerIn: parent; name: "mic"; size: 17; color: "#FFFFFF" }
+                    }
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 3
+                        Repeater {
+                            model: [0.45, 0.8, 1.0, 0.7, 0.9, 0.55, 0.35]
+                            Rectangle {
+                                required property real modelData
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 3; radius: 1.5
+                                height: 6 + 18 * modelData
+                                color: Theme.accent
+                                opacity: 0.55 + 0.45 * modelData
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

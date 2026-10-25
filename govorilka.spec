@@ -7,13 +7,14 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, copy_metadata
 
 IS_MAC = sys.platform == "darwin"
-VERSION = os.environ.get("GOVORILKA_VERSION", "0.0.0")
+VERSION = os.environ.get("GOVORILKA_VERSION", "")  # из тега релиза; без него — пробная сборка
+PLIST_VERSION = VERSION or "0.0.0"  # в Info.plist нужны цифры
 MAC_ARCH = os.environ.get("GOVORILKA_ARCH", "arm64")  # arm64 — Apple Silicon, x86_64 — Intel
 MAC_MIN_OS = "13.0" if MAC_ARCH == "x86_64" else "14.0"  # под onnxruntime для своей архитектуры
 
 # номер версии из тега релиза: приложение узнаёт по нему, не вышла ли новая (govorilka/version.py)
 with open("govorilka/_build_version.py", "w", encoding="utf-8") as _version_file:
-    _version_file.write(f'VERSION = "{VERSION}"\n')
+    _version_file.write(f'VERSION = "{VERSION or "dev"}"\n')
 
 datas = collect_data_files("onnx_asr")  # предобработчики звука в .onnx лежат внутри пакета
 # livekit грузит нативную библиотеку WebRTC (эхоподавление) из своего пакета через importlib.resources
@@ -114,7 +115,7 @@ if IS_MAC:
         version=VERSION,
         info_plist={
             "CFBundleDisplayName": "Говорилка",
-            "CFBundleShortVersionString": VERSION,
+            "CFBundleShortVersionString": PLIST_VERSION,
             "CFBundleVersion": VERSION,
             "LSApplicationCategoryType": "public.app-category.productivity",
             "LSMinimumSystemVersion": MAC_MIN_OS,

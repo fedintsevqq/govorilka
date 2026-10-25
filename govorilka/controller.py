@@ -23,10 +23,10 @@ from govorilka.audio import AudioError
 from govorilka.audio_base import PermissionDeniedError
 from urllib.parse import quote
 
-from govorilka import ai, desktop_apps, models, summary, updates, version
+from govorilka import ai, desktop_apps, features, models, summary, updates, version
 from govorilka.claude_bridge import ClaudeNotFoundError, build_prompt, open_in_claude
 from govorilka.dictation import Dictation
-from govorilka.config import DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
+from govorilka.config import FROZEN, DATA_DIR, SPEAKER_FILE, SPEAKER_OTHERS, Settings, load_settings, save_settings
 from govorilka.engines import Engines, load_engines
 from govorilka.filejob import CANCELLED, FileJob
 from govorilka.hotkeys import (
@@ -191,6 +191,52 @@ class Controller:
 
         if models.missing(self.settings.model):
             threading.Thread(target=work, name="prefetch-models", daemon=True).start()
+
+    def check_signing_change(self) -> bool:
+        """Mac: подпись программы сменилась (раньше была временная, теперь постоянный сертификат, или наоборот).
+        macOS в списке разрешений при этом показывает включённый переключатель от прежней копии, а новой копии доступа
+        нет: микрофон «выдан», но не работает. Один раз сбрасываем разрешения, система спросит заново. True — сбросили."""
+        if sys.platform != "darwin" or not FROZEN:
+            return False
+        current = permissions.signing_identity()
+        if not current or current == self.settings.signing_id:
+            return False
+        previously_used = self.settings.tour_done  # новая установка сбрасывать нечего: разрешений ещё не было
+        self.settings = replace(self.settings, signing_id=current)
+        save_settings(self.settings)
+        if not previously_used:
+            return False
+        problems = permissions.reset_all()
+        log.info("Подпись программы сменилась (%s): разрешения сброшены, ошибки: %s", current, problems or "нет")
+        return True
+
+    def init_autostart(self) -> None:
+        """При первой установке Говорилка запускается вместе с системой: горячая клавиша должна работать сразу.
+        Только один раз и только на новой установке: кто выключил автозапуск, того больше не трогаем."""
+        if self.settings.autostart_initialized:
+            return
+        fresh = not self.settings.tour_done
+        self.settings = replace(self.settings, autostart_initialized=True)
+        save_settings(self.settings)
+        if not fresh or not FROZEN:
+            return
+        try:
+            autostart.set_enabled(True)
+            log.info("Автозапуск включён при установке")
+        except OSError as exc:
+            log.warning("Автозапуск при установке не включился: %s", exc)
+
+    def whats_new_since(self) -> str | None:
+        """С какой версии показывать «Что нового»; None — показывать нечего. Запоминает, что показали."""
+        current = features.guide_version()
+        seen = self.settings.last_seen_version
+        if seen == current:
+            return None
+        self.settings = replace(self.settings, last_seen_version=current)
+        save_settings(self.settings)
+        if not seen:
+            return features.BASELINE if self.settings.tour_done else None  # новому человеку хватит знакомства
+        return seen if version.parse(seen) and features.new_since(seen) else None
 
     def startup_notices(self) -> list[str]:
         """Что стоит сказать при запуске: нет разрешения, конфликт с раскладкой, старая версия рядом."""

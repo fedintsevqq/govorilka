@@ -561,7 +561,7 @@ Window {
                         Layout.fillWidth: true
                         spacing: 2
                         Text {
-                            text: "Говорилка " + (backend.appVersion === "dev" ? "(запуск из исходников)" : backend.appVersion)
+                            text: "Говорилка " + (backend.appVersion === "dev" ? (backend.isTrialBuild ? "(пробная сборка: обновления для неё отключены)" : "(запуск из исходников)") : backend.appVersion)
                             font.pixelSize: Theme.fontBody
                             font.weight: Font.DemiBold
                             color: Theme.text
@@ -584,6 +584,22 @@ Window {
                         tip: "Спросить у GitHub, вышла ли новая версия"
                         onClicked: backend.checkForUpdates()
                     }
+                }
+                Text {
+                    visible: backend.installHint !== "" && backend.updateStatus === "available"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: backend.installHint
+                    font.pixelSize: 12
+                    color: Theme.pause
+                }
+                Text {
+                    visible: backend.installError !== ""
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: backend.installError
+                    font.pixelSize: 12
+                    color: Theme.danger
                 }
                 RowLayout {
                     visible: backend.updateStatus === "available"
@@ -670,7 +686,7 @@ Window {
         RowLayout {
             anchors { fill: parent; leftMargin: 24; rightMargin: 24 }
             spacing: 10
-            PillButton { text: "Как пользоваться"; tip: "Снова показать знакомство с тренировкой горячей клавиши"; iconName: "bolt"; onClicked: { win.close(); win.tourRequested() } }
+            PillButton { text: "Как пользоваться"; tip: "Все возможности Говорилки: что умеет и что появилось нового"; iconName: "bolt"; onClicked: { win.close(); backend.showFeatures("all") } }
             Item { Layout.fillWidth: true }
             PillButton { text: "Отмена"; tip: "Закрыть без изменений (Esc)"; onClicked: win.close() }
             PillButton {

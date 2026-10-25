@@ -40,7 +40,7 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai, asr_models, installer, permissions, updates, version
+from govorilka import ai, asr_models, features, installer, permissions, updates, version
 from govorilka import models as model_files  # имя models занято свойством со списком моделей
 from govorilka import summary
 from govorilka.qt import autopaste, mac_overlay
@@ -244,6 +244,8 @@ class Backend(QObject):
         self._keyboard: Keyboard | None = None
         self._tray_available = False
         self._startup_notices: list[str] = []
+        self._whats_new_since = ""
+        self._install_error = ""
 
         for signal, slot in (
             (self._state_in, self._on_state),
@@ -284,6 +286,13 @@ class Backend(QObject):
     def start(self) -> None:
         self.controller.start()
         self._startup_notices = self.controller.startup_notices()
+        if self.controller.check_signing_change():
+            self._startup_notices.append(
+                "Говорилка теперь подписана по-новому, поэтому macOS попросит разрешения заново. Это один раз: "
+                "они откроются в настройках, раздел «Разрешения macOS»."
+            )
+        self.controller.init_autostart()
+        self._whats_new_since = self.controller.whats_new_since() or ""
 
     def flush_startup_notices(self) -> None:
         """Сообщения при запуске (нет разрешения, старая версия рядом) показываем, когда окно уже готово."""
@@ -361,6 +370,41 @@ class Backend(QObject):
         return asr_models.catalog_entries() + [{"id": CUSTOM_MODEL_ITEM, "label": "Своя модель…"}]
 
     models = Property("QVariantList", _get_models, constant=True)
+
+    # ---------- возможности и «что нового» ----------
+
+    featuresRequested = Signal(str)  # noqa: N815 — "new" (после обновления) или "all"
+
+    def _feature_maps(self, items: list[features.Feature]) -> list[dict[str, object]]:
+        mac = sys.platform == "darwin"
+        s = self.controller.settings
+        try:
+            hotkey = format_chord(parse_chord(s.hotkey))
+            dictation = format_chord(parse_chord(s.dictation_hotkey))
+        except ValueError:
+            hotkey, dictation = s.hotkey, s.dictation_hotkey
+        return [features.render(f, hotkey, dictation, mac) for f in features.for_platform(items, mac)]
+
+    featuresAll = Property("QVariantList", lambda self: self._feature_maps(features.FEATURES), notify=settingsChanged)  # noqa: N815
+    featuresNew = Property(  # noqa: N815
+        "QVariantList",
+        lambda self: self._feature_maps(features.new_since(self._whats_new_since or features.BASELINE)),
+        notify=settingsChanged,
+    )
+    guideVersion = Property(str, lambda self: features.guide_version(), constant=True)  # noqa: N815
+    whatsNewPending = Property(bool, lambda self: bool(self._whats_new_since), constant=True)  # noqa: N815
+
+    @Slot(str)
+    @safe_slot
+    def showFeatures(self, mode: str) -> None:  # noqa: N802
+        self.featuresRequested.emit(mode)
+
+    tourRequested = Signal()  # noqa: N815
+
+    @Slot()
+    @safe_slot
+    def showTour(self) -> None:  # noqa: N802
+        self.tourRequested.emit()
 
     # ---------- итоги созвона на локальной модели ----------
 
@@ -666,6 +710,16 @@ class Backend(QObject):
             self.toast.emit(f"У вас последняя версия: {version.VERSION}", "success")
 
     canInstallUpdate = Property(bool, lambda self: installer.can_install(), constant=True)  # noqa: N815
+    installError = Property(str, lambda self: self._install_error, notify=updateChanged)  # noqa: N815
+    installHint = Property(str, lambda self: self._install_hint(), constant=True)  # noqa: N815
+    isTrialBuild = Property(bool, lambda self: version.is_trial_build(), constant=True)  # noqa: N815
+
+    @staticmethod
+    def _install_hint() -> str:
+        """Почему «Установить» недоступно и что сделать (пусто — доступно или это не Mac)."""
+        if installer.can_install() or sys.platform != "darwin" or not installer.FROZEN:
+            return ""
+        return installer.mac_location_problem(installer.app_bundle())
     installing = Property(bool, lambda self: self._installing, notify=updateChanged)
 
     @Slot()
@@ -676,12 +730,19 @@ class Backend(QObject):
         if info is None or self._installing:
             return
         if not installer.can_install():
-            self.downloadUpdate()  # из исходников или не на Windows: скачивание браузером, как раньше
+            hint = self._install_hint()
+            if hint:  # Mac: запущена из образа или из папки без записи — молча открывать браузер нельзя, человек не поймёт
+                self._install_error = hint
+                self.updateChanged.emit()
+                self.toast.emit(hint, "error")
+                return
+            self.downloadUpdate()  # из исходников: скачивание браузером, как раньше
             return
         if self.controller.state != AppState.IDLE or self.controller.busy:
             self.toast.emit("Дождитесь конца записи или расшифровки: после установки Говорилка перезапустится", "info")
             return
         self._installing = True
+        self._install_error = ""
         self.updateChanged.emit()
 
         def work() -> None:
@@ -704,9 +765,10 @@ class Backend(QObject):
             QTimer.singleShot(700, self.quit)
             return
         self._installing = False
+        self._install_error = message
         self._set_status("Готово")
         self.updateChanged.emit()
-        self.toast.emit(message + ". Можно скачать файл вручную кнопкой «Скачать»", "error")
+        self.toast.emit(message, "error")
 
     @Slot()
     @safe_slot

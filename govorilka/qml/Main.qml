@@ -173,7 +173,7 @@ ApplicationWindow {
         readonly property bool shown: backend.updateInfo.available === true
         visible: shown
         anchors { top: topBar.bottom; left: parent.left; right: parent.right; leftMargin: 16; rightMargin: 16; topMargin: 10 }
-        height: shown ? 46 : 0
+        height: shown ? (backend.installError !== "" ? 58 : 46) : 0
         radius: 16
         color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.14 : 0.10)
         border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.4)
@@ -185,11 +185,14 @@ ApplicationWindow {
             Icon { name: "bolt"; size: 17; color: Theme.accent; Layout.alignment: Qt.AlignVCenter }
             Text {
                 Layout.fillWidth: true
-                text: "Вышла версия " + backend.updateInfo.version + (backend.updateInfo.sizeMb ? " (" + backend.updateInfo.sizeMb + " МБ)" : "")
+                text: backend.installError !== "" ? backend.installError
+                      : "Вышла версия " + backend.updateInfo.version + (backend.updateInfo.sizeMb ? " (" + backend.updateInfo.sizeMb + " МБ)" : "")
                 elide: Text.ElideRight
+                maximumLineCount: 2
+                wrapMode: backend.installError !== "" ? Text.WordWrap : Text.NoWrap
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
-                color: Theme.text
+                color: backend.installError !== "" ? Theme.danger : Theme.text
             }
             LoadRing { visible: backend.installing; fraction: backend.loadFraction; size: 20; Layout.alignment: Qt.AlignVCenter }
             Text {
@@ -201,13 +204,13 @@ ApplicationWindow {
             }
             PillButton { text: "Что нового"; implicitHeight: 32; visible: !backend.installing; tip: "Открыть страницу релиза на GitHub"; onClicked: backend.openReleasePage() }
             PillButton {
-                text: backend.installing ? "Устанавливаю…" : backend.canInstallUpdate ? "Установить" : "Скачать"
+                text: backend.installing ? "Устанавливаю…" : backend.installError !== "" ? "Скачать вручную" : backend.canInstallUpdate ? "Установить" : "Скачать"
                 implicitHeight: 32
                 variant: "primary"
                 enabled: !backend.installing
                 tip: backend.canInstallUpdate ? "Скачать новую версию, проверить и заменить ею программу. Говорилка перезапустится сама"
                                               : "Скачать новую версию: закройте Говорилку и запустите скачанный файл"
-                onClicked: backend.installUpdate()
+                onClicked: backend.installError !== "" ? backend.downloadUpdate() : backend.installUpdate()
             }
             IconButton { iconName: "close"; size: 30; visible: !backend.installing; tip: "Напомнить позже: плашка скроется до следующего запуска"; onClicked: backend.dismissUpdate() }
         }
@@ -560,6 +563,18 @@ ApplicationWindow {
     RenameSheet { id: renameSheet }
 
     Onboarding { id: tour }
+    FeatureGuide { id: featureGuide }
+    // после обновления показываем, что нового: когда окно на экране и знакомство не открыто
+    property bool whatsNewShown: false
+    Timer {
+        interval: 700
+        repeat: true
+        running: backend.whatsNewPending && !window.whatsNewShown
+        onTriggered: if (window.visible && window.visibility !== Window.Minimized && !tour.opened && window.opts.tour_done) {
+            window.whatsNewShown = true
+            featureGuide.show("new")
+        }
+    }
     // знакомство — при первом запуске, как только окно действительно на экране. Раз в полсекунды проверяем, пока не
     // покажем: на Mac окно появляется позже, чем сработал бы разовый таймер, и знакомство терялось
     property bool tourShown: false
@@ -583,6 +598,8 @@ ApplicationWindow {
         function onHotkeyReleased() { radial.releaseHotkey() }
         function onWindowRequested() { window.showWindow() }
         function onSettingsRequested() { window.showWindow(); settingsWindow.open() }
+        function onFeaturesRequested(mode) { window.showWindow(); featureGuide.show(mode) }
+        function onTourRequested() { window.showWindow(); tour.begin() }
     }
 
     Shortcut { sequences: ["Ctrl+,"]; onActivated: settingsWindow.open() }
