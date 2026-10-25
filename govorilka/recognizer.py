@@ -7,7 +7,7 @@ import threading
 
 import numpy as np
 
-from govorilka import models
+from govorilka import asr_models, models
 from govorilka.config import SAMPLE_RATE
 
 log = logging.getLogger(__name__)
@@ -24,11 +24,14 @@ class Recognizer:
         import onnx_asr  # тяжёлый импорт, грузим только когда нужен
 
         try:
+            ref = asr_models.parse(model_name)
             models.ensure_downloaded("asr", model_name, "модель распознавания", on_status)
             on_status("Загружаю модель распознавания…")
-            self._model = onnx_asr.load_model(model_name, models.local_dir(model_name), providers=models.CPU)
+            self._model = onnx_asr.load_model(
+                ref.load_name, ref.local_dir, quantization=ref.quantization, providers=models.CPU
+            )
         except Exception as exc:  # onnx-asr бросает свои исключения и ошибки сети
-            raise RecognizerError(f"Не загрузил модель {model_name}: {exc}") from exc
+            raise RecognizerError(f"Не загрузил модель {asr_models.display_name(model_name)}: {exc}") from exc
         # Сессии onnxruntime можно вызывать из нескольких потоков сразу (проверено: результат тот же),
         # поэтому микрофон и собеседники распознаются параллельно. Счётчик нужен только черновикам.
         self._busy = 0

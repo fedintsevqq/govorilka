@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import functools
+import gc
 import re
 import logging
 import math
@@ -16,13 +17,15 @@ import time
 from dataclasses import asdict, fields, replace
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import Property, QObject, QPoint, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QWindow
 
 from govorilka.audio_base import PermissionDeniedError
-from govorilka.config import MODELS, SOURCE_MIC, SOURCE_SYSTEM, Settings
+from govorilka.config import SAMPLE_RATE, SOURCE_MIC, SOURCE_SYSTEM, Settings
 from govorilka.controller import AppState, ClaudeResult, Controller, Listener
 from govorilka.engines import LOADING
+from govorilka.recognizer import Recognizer
 from govorilka.hotkeys import (
     ChordRecorder,
     Keyboard,
@@ -36,13 +39,15 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai, permissions
+from govorilka import ai, asr_models, permissions
 from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
 from govorilka.transcript import Transcript, format_offset
 
 log = logging.getLogger(__name__)
+
+CUSTOM_MODEL_ITEM = "__custom__"  # пункт «Своя модель…» в списке моделей: ключом не является
 
 LEVEL_TICK_MS = 33  # индикаторы уровня — 30 кадров в секунду
 LEVEL_DECAY = 0.86
@@ -169,6 +174,7 @@ class Backend(QObject):
         self._capturing = False
         self._tour_active = False
         self._ai_busy = False
+        self._checking_model = False
         self._access_busy: set[str] = set()
         self._access_asked: set[str] = set()
         self._quitting = False
@@ -195,6 +201,7 @@ class Backend(QObject):
             (self._finished_in, self._on_finished),
             (self._ai_in, self._on_ai_result),
             (self._access_done, self._on_access_done),
+            (self._custom_in, self._on_custom_checked),
         ):
             signal.connect(slot)
         # контроллер создаём после подключения сигналов: его первое сообщение («горячая клавиша не включена») не пропадёт
@@ -282,9 +289,65 @@ class Backend(QObject):
     settings = Property("QVariantMap", _get_settings, notify=settingsChanged)
 
     def _get_models(self) -> list[dict[str, str]]:
-        return [{"id": key, "label": label} for key, label in MODELS.items()]
+        """Готовые модели и в конце пункт «Своя модель…», который открывает выбор своей."""
+        return asr_models.catalog_entries() + [{"id": CUSTOM_MODEL_ITEM, "label": "Своя модель…"}]
 
     models = Property("QVariantList", _get_models, constant=True)
+    customTypes = Property(  # noqa: N815
+        "QVariantList",
+        lambda self: [{"id": key, "label": label, "files": files} for key, label, files in asr_models.CUSTOM_TYPES],
+        constant=True,
+    )
+
+    @Slot(str, result=str)
+    def modelLabel(self, key: str) -> str:  # noqa: N802
+        return asr_models.display_name(key)
+
+    @Slot(str, result=bool)
+    def isCustomModel(self, key: str) -> bool:  # noqa: N802
+        return asr_models.is_custom(key)
+
+    customModelChecked = Signal(bool, str, str)  # noqa: N815 — удалось, сообщение, ключ модели
+    _custom_in = Signal(bool, str, str)
+
+    @Slot(str, str, str, bool)
+    @safe_slot
+    def checkCustomModel(self, kind: str, reference: str, model_type: str, int8: bool) -> None:  # noqa: N802
+        """Проверяет свою модель: находит или скачивает файлы, загружает и прогоняет через неё тишину. Идёт в фоне:
+        скачивание бывает долгим, а прогресс виден в кольце загрузки."""
+        if self._checking_model:
+            return
+        self._checking_model = True
+        reference = reference.strip().strip('"')
+
+        def work() -> None:
+            ok, message, key = False, "", ""
+            recognizer = None
+            try:
+                if kind == "hf":
+                    key = asr_models.hf_key(reference, asr_models.INT8 if int8 else None)
+                else:
+                    key = asr_models.dir_key(model_type or asr_models.AUTO_TYPE, reference)
+                ref = asr_models.parse(key)
+                recognizer = Recognizer(key, self._status_in.emit)
+                recognizer.transcribe(np.zeros(SAMPLE_RATE * 2, dtype=np.float32))  # модель должна не просто загрузиться, но и отработать
+                ok, message = True, f"Модель работает: {ref.label}. Нажмите «Сохранить», и она станет основной."
+            except asr_models.ModelError as exc:
+                message = str(exc)
+            except Exception as exc:  # noqa: BLE001 — любая причина должна дойти до человека, а не оборвать проверку
+                log.exception("Своя модель не прошла проверку")
+                message = str(exc)
+            finally:
+                del recognizer
+                gc.collect()
+            self._custom_in.emit(ok, message, key if ok else "")
+
+        threading.Thread(target=work, name="check-custom-model", daemon=True).start()
+
+    def _on_custom_checked(self, ok: bool, message: str, key: str) -> None:
+        self._checking_model = False
+        self._status_in.emit("Готово")
+        self.customModelChecked.emit(ok, message, key)
 
     def _get_ai(self) -> dict[str, str]:
         target = ai.TARGETS[self.controller.ai_target()]

@@ -736,3 +736,26 @@ def test_prefetch_downloads_only_missing_models_smallest_first(monkeypatch):
     assert models.prefetch("gigaam-v3-e2e-rnnt", statuses.append) is True
     assert order == ["se", "asr"] and statuses[-1] == models.DOWNLOADED
     assert models.prefetch("gigaam-v3-e2e-rnnt", statuses.append) is False  # всё уже скачано: ничего не делаем
+
+
+def test_custom_model_check_reports_a_missing_folder_and_a_bad_address(backend, qapp):
+    from conftest import pump
+
+    results = []
+    backend.customModelChecked.connect(lambda ok, message, key: results.append((ok, message, key)))
+    backend.checkCustomModel("dir", r"E:\такой\папки\нет", "nemo-conformer-ctc", False)
+    assert pump(qapp, lambda: len(results) == 1, timeout=20)
+    ok, message, key = results[0]
+    assert ok is False and key == "" and message  # человек видит причину, настройки не меняются
+    backend.checkCustomModel("hf", "просто слово", "", False)
+    assert pump(qapp, lambda: len(results) == 2, timeout=20)
+    assert results[1][0] is False and "автор/репозиторий" in results[1][1]
+
+
+def test_model_list_ends_with_the_custom_item_and_labels_custom_keys(backend):
+    from govorilka import asr_models
+
+    assert backend.models[-1]["id"] == "__custom__"
+    assert {entry["id"] for entry in backend.models[:-1]} >= {"gigaam-v3-e2e-rnnt", "gigaam-v3-e2e-rnnt@int8"}
+    assert backend.isCustomModel(asr_models.hf_key("a/b")) and not backend.isCustomModel("gigaam-v3-e2e-ctc")
+    assert backend.modelLabel(asr_models.hf_key("a/b")) == "Своя модель: a/b"

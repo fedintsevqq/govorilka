@@ -18,7 +18,36 @@ Window {
     transientParent: null
 
     property var draft: ({})
-    property var original: ({})   // как было при открытии: сохраняем только то, что поменяли здесь
+    property var original: ({})
+    // своя модель: проверенный ключ, открыта ли панель выбора, идёт ли проверка и её итог
+    property string customKey: ""
+    property bool customOpen: false
+    property bool customChecking: false
+    property string customMessage: ""
+    property bool customOk: false
+    readonly property var modelItems: {
+        const items = backend.models.slice(0, -1)
+        if (customKey !== "") items.push({ id: customKey, label: backend.modelLabel(customKey) })
+        items.push(backend.models[backend.models.length - 1])
+        return items
+    }
+    function modelIndex(key) {
+        for (let i = 0; i < modelItems.length; ++i) if (modelItems[i].id === key) return i
+        return 0
+    }
+    Connections {
+        target: backend
+        function onCustomModelChecked(ok, message, key) {
+            win.customChecking = false
+            win.customOk = ok
+            win.customMessage = message
+            if (ok) {
+                win.customKey = key
+                win.setValue("model", key)
+                modelBox.currentIndex = win.modelIndex(key)
+            }
+        }
+    }   // как было при открытии: сохраняем только то, что поменяли здесь
     property bool autostart: false
     property string hotkeyLabel: ""
     property string hotkeyWarning: ""
@@ -35,7 +64,11 @@ Window {
         promptField.text = draft.claude_prompt
         folderField.text = draft.transcripts_dir
         claudeField.text = draft.claude_workdir
-        modelBox.currentIndex = Math.max(0, modelBox.find(draft.model))
+        customKey = backend.isCustomModel(draft.model) ? draft.model : ""
+        customOpen = false
+        customChecking = false
+        customMessage = ""
+        modelBox.currentIndex = modelIndex(draft.model)
         aiBox.currentIndex = Math.max(0, aiBox.find(draft.ai_target))
         openBox.currentIndex = draft.ai_open_in === "browser" ? 1 : 0
         unloadBox.currentIndex = Math.max(0, [5, 10, 30, 0].indexOf(draft.unload_after_min))
@@ -230,10 +263,101 @@ Window {
                 Label { text: "Модель распознавания" }
                 ComboField {
                     id: modelBox
-                    model: backend.models
+                    model: win.modelItems
                     textRole: "label"
-                    onActivated: win.setValue("model", backend.models[currentIndex].id)
-                    function find(id) { for (let i = 0; i < backend.models.length; ++i) if (backend.models[i].id === id) return i; return 0 }
+                    onActivated: {
+                        const id = win.modelItems[currentIndex].id
+                        if (id === "__custom__") {
+                            win.customOpen = true                       // откроем выбор своей модели; пока не проверена, прежняя остаётся
+                            currentIndex = win.modelIndex(win.draft.model)
+                        } else {
+                            win.customOpen = false
+                            win.setValue("model", id)
+                        }
+                    }
+                }
+
+                // ----- своя модель: с Hugging Face или из папки на компьютере -----
+                ColumnLayout {
+                    id: customPanel
+                    Layout.fillWidth: true
+                    visible: win.customOpen
+                    spacing: 8
+                    property string kind: "hf"
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "Говорилка понимает модели в формате ONNX: NeMo (FastConformer, Parakeet, Canary), Vosk/Kaldi, T-One, Whisper и GigaAM. Перед выбором модель проверяется: загружается и прогоняется через неё тишина."
+                        font.pixelSize: 12
+                        lineHeight: 1.2
+                        color: Theme.textTertiary
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 7
+                        ChipToggle { text: "С Hugging Face"; iconName: "open"; checked: customPanel.kind === "hf"; onClicked: customPanel.kind = "hf"; tip: "Скачать модель по адресу вида автор/репозиторий. В репозитории должен быть config.json с model_type" }
+                        ChipToggle { text: "Папка на компьютере"; iconName: "folder"; checked: customPanel.kind === "dir"; onClicked: customPanel.kind = "dir"; tip: "Использовать готовые файлы модели из папки: ничего не копируется и не скачивается" }
+                    }
+                    FieldBox {
+                        id: customField
+                        trailingButton: customPanel.kind === "dir"
+                        placeholder: customPanel.kind === "hf" ? "автор/репозиторий, например istupakov/gigaam-v3-onnx" : "Папка с файлами модели"
+                        onBrowse: { folderDialog.target = customField; folderDialog.open() }
+                    }
+                    ComboField {
+                        id: customType
+                        visible: customPanel.kind === "dir"
+                        model: backend.customTypes
+                        textRole: "label"
+                    }
+                    Text {
+                        visible: customPanel.kind === "dir"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "Нужные файлы: " + backend.customTypes[customType.currentIndex].files
+                        font.pixelSize: 12
+                        color: Theme.textTertiary
+                    }
+                    ToggleRow {
+                        visible: customPanel.kind === "hf"
+                        title: "Облегчённая версия (int8)"
+                        hint: "Файлы в 3–4 раза меньше. Если в репозитории её нет, проверка скажет об этом"
+                        checked: customInt8.value
+                        onToggled: (v) => customInt8.value = v
+                        QtObject { id: customInt8; property bool value: false }
+                    }
+                    RowLayout {
+                        spacing: 10
+                        PillButton {
+                            text: win.customChecking ? "Проверяю…" : "Проверить и выбрать"
+                            iconName: "check"
+                            variant: "primary"
+                            enabled: !win.customChecking && customField.text.trim() !== ""
+                            tip: "Скачать (если нужно), загрузить модель и проверить, что она работает"
+                            onClicked: {
+                                win.customChecking = true
+                                win.customMessage = ""
+                                backend.checkCustomModel(customPanel.kind, customField.text,
+                                                         backend.customTypes[customType.currentIndex].id, customInt8.value)
+                            }
+                        }
+                        LoadRing { visible: win.customChecking; fraction: backend.loadFraction; size: 22 }
+                        Text {
+                            visible: win.customChecking && backend.loading
+                            text: backend.loadFraction >= 0 ? Math.round(backend.loadFraction * 100) + "%" : "загружаю…"
+                            font.pixelSize: 12
+                            color: Theme.textSecondary
+                        }
+                    }
+                    Text {
+                        visible: win.customMessage !== ""
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: win.customMessage
+                        font.pixelSize: 13
+                        lineHeight: 1.2
+                        color: win.customOk ? Theme.success : Theme.danger
+                    }
                 }
                 Label { text: "Освобождать память, когда запись не идёт" }
                 ComboField {
@@ -377,7 +501,7 @@ Window {
     // Esc в открытом списке закрывает только список, а не всё окно
     Shortcut {
         sequences: ["Escape"]
-        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible
+        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible && !customType.popup.visible
         onActivated: win.close()
     }
 }

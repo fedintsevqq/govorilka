@@ -154,7 +154,9 @@ def load_settings(path: Path = SETTINGS_FILE) -> Settings:
     settings = replace(defaults, **known)
     if settings.claude_prompt == OLD_DEFAULT_PROMPT:  # запрос никто не менял — берём новый, подходящий и для чатов
         settings = replace(settings, claude_prompt=DEFAULT_PROMPT)
-    if settings.model not in MODELS:
+    from govorilka import asr_models  # здесь, а не наверху: asr_models сам читает константы из config
+
+    if not asr_models.is_valid(settings.model):
         settings = replace(settings, model=DEFAULT_MODEL)
     return settings
 
