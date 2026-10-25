@@ -159,11 +159,10 @@ jobs:
             fi
           }
           # из исходников с отладочным распределителем памяти Python: ловит порчу памяти и вызовы без GIL в момент ошибки
-          LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONFAULTHANDLER=1 GOVORILKA_LIVE_MODE=settings
+          # PYTHONTRACEMALLOC: где выделен испорченный блок памяти; trace — шаги открытия настроек в журнале
+          LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONTRACEMALLOC=30 PYTHONFAULTHANDLER=1 GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_FLAGS=trace
+          LIVE_CMD="python run_govorilka.py" run_live PYTHONMALLOC=debug PYTHONTRACEMALLOC=30 PYTHONFAULTHANDLER=1 GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_ACCESS=1 GOVORILKA_LIVE_FLAGS=trace,nocapture,noaccesstimer GOVORILKA_LIVE_NO_KEYBOARD=1
           run_live GOVORILKA_LIVE_MODE=settings
-          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_ACCESS=1 GOVORILKA_LIVE_FLAGS=nocapture,noaccesstimer GOVORILKA_LIVE_NO_KEYBOARD=1
-          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_NO_ACCESS=1 GOVORILKA_LIVE_FLAGS=noaccesstimer
-          run_live GOVORILKA_LIVE_MODE=settings GOVORILKA_LIVE_FLAGS=nocapture GOVORILKA_LIVE_NO_KEYBOARD=1
           run_live GOVORILKA_LIVE_MODE=guide
           run_live GOVORILKA_LIVE_MODE=main
           run_live GOVORILKA_LIVE_MODE=all
