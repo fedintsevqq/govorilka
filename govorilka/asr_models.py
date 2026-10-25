@@ -2,7 +2,7 @@
 
 Ключ модели — одна строка в настройках (`Settings.model`):
 
-- `gigaam-v3-e2e-rnnt` — готовая модель из каталога (две от Сбера);
+- `gigaam-v3-e2e-rnnt` — готовая модель из каталога (CATALOG: две от Сбера по умолчанию и ещё несколько);
 - `gigaam-v3-e2e-rnnt@int8` — она же в облегчённом виде int8: файлы в 4 раза меньше (214 МБ вместо 844 МБ),
   памяти нужно на 600–700 МБ меньше;
 - `hf:автор/репозиторий` (и `hf:автор/репозиторий@int8`) — своя модель с Hugging Face: скачивается один раз в папку
@@ -48,6 +48,58 @@ CUSTOM_TYPES: list[tuple[str, str, str]] = [
 ]
 KNOWN_TYPES = {name for name, _label, _files in CUSTOM_TYPES if name != AUTO_TYPE}
 _REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")  # автор/репозиторий
+
+
+@dataclass(frozen=True)
+class CatalogModel:
+    """Модель из каталога в настройках. Точность и скорость — замеры onnx-asr на русской речи (docs/comparison,
+    docs/benchmarks): WER, % ошибок в словах, и RTFx на процессоре x64 — во сколько раз быстрее реального времени."""
+
+    key: str  # ключ в настройках: имя модели onnx-asr и, может быть, @int8
+    title: str
+    blurb: str  # зачем она человеку
+    languages: str
+    size_mb: int  # сколько скачивать (по файлам репозитория на Hugging Face)
+    wer: float
+    rtfx: float
+    punctuation: bool  # ставит знаки препинания и заглавные (у кого неизвестно — False, не обещаем)
+    recommended: bool = False
+
+    @property
+    def accuracy(self) -> int:
+        """Сколько слов из ста модель пишет верно."""
+        return round(100 - self.wer)
+
+    @property
+    def speed(self) -> int:
+        """Скорость по пятибалльной шкале (5 — быстрее всех)."""
+        return next(score for score, limit in ((5, 60), (4, 40), (3, 25), (2, 10), (1, 0)) if self.rtfx >= limit)
+
+
+CATALOG: list[CatalogModel] = [
+    CatalogModel("gigaam-v3-e2e-rnnt", "GigaAM v3 RNNT", "Лучшая для русского: точно, с пунктуацией и заглавными. По умолчанию",
+                 "русский", 851, 7.6, 41.9, True, recommended=True),
+    CatalogModel("gigaam-v3-e2e-ctc", "GigaAM v3 CTC", "Почти та же точность, на треть быстрее",
+                 "русский", 844, 7.8, 59.0, True),
+    CatalogModel("gigaam-v3-e2e-rnnt@int8", "GigaAM v3 RNNT, экономная", "Та же модель в 4 раза меньше: для ноутбуков с 8 ГБ памяти",
+                 "русский", 215, 7.6, 42.5, True),
+    CatalogModel("gigaam-v3-e2e-ctc@int8", "GigaAM v3 CTC, экономная", "Быстрая и лёгкая версия CTC",
+                 "русский", 214, 7.8, 52.2, True),
+    CatalogModel("t-tech/t-one", "T-one (Т-Банк)", "Обучена на телефонных разговорах: хороша для звонков и плохой связи",
+                 "русский", 137, 6.6, 26.3, False),
+    CatalogModel("gigaam-multilingual-large-ctc@int8", "GigaAM Multilingual", "Русский и ещё четыре языка: казахский, киргизский, узбекский, английский",
+                 "5 языков", 564, 5.6, 30.4, False),
+    CatalogModel("nemo-parakeet-tdt-0.6b-v3@int8", "NVIDIA Parakeet v3", "25 европейских языков, в том числе английский: для созвонов не на русском",
+                 "25 языков", 639, 11.0, 30.5, True),
+    CatalogModel("nemo-fastconformer-ru-rnnt@int8", "NVIDIA FastConformer", "Лёгкая русская модель с пунктуацией",
+                 "русский", 130, 11.6, 54.2, True),
+    CatalogModel("alphacep/vosk-model-ru@int8", "Vosk 0.54", "Маленькая и быстрая, без знаков препинания",
+                 "русский", 69, 9.9, 70.5, False),
+    CatalogModel("alphacep/vosk-model-small-ru@int8", "Vosk small", "Самая маленькая: для старых и слабых компьютеров",
+                 "русский", 25, 14.5, 83.5, False),
+]
+CATALOG_BY_KEY = {model.key: model for model in CATALOG}
+CATALOG_IDS = {_model.key.split("@")[0] for _model in CATALOG}
 
 
 class ModelError(ValueError):
@@ -127,10 +179,12 @@ def parse(key: str) -> ModelRef:
         folder = MODELS_DIR / (repo.replace("/", "--") + (f"@{quantization}" if quantization else ""))
         return ModelRef(key, f"Своя модель: {repo}", repo, folder, quantization, repo=repo)
     model_id, quantization = _split_quantization(key)
-    if model_id not in MODELS:
+    if model_id not in MODELS and model_id not in CATALOG_IDS:
         raise ModelError(f"Незнакомая модель: {key}")
-    folder = MODELS_DIR / (model_id if not quantization else f"{model_id}@{quantization}")
-    return ModelRef(key, MODELS[model_id], model_id, folder, quantization, repo="")
+    folder = MODELS_DIR / (model_id.replace("/", "--") + (f"@{quantization}" if quantization else ""))
+    entry = CATALOG_BY_KEY.get(key)
+    label = entry.title if entry else MODELS.get(model_id, model_id) + (" — экономная int8" if quantization else "")
+    return ModelRef(key, label, model_id, folder, quantization, repo="")
 
 
 def is_valid(key: str) -> bool:
@@ -155,13 +209,8 @@ def display_name(key: str) -> str:
 
 
 def catalog_entries() -> list[dict[str, str]]:
-    """Готовые модели для выпадающего списка: две GigaAM и их облегчённые версии."""
-    entries = [{"id": key, "label": label} for key, label in MODELS.items()]
-    entries += [
-        {"id": catalog_key(key, INT8), "label": f"{label.split(' — ')[0]} — экономная int8 (в 4 раза меньше файлы и память)"}
-        for key, label in MODELS.items()
-    ]
-    return entries
+    """Готовые модели каталога: ключ и название."""
+    return [{"id": model.key, "label": model.title} for model in CATALOG]
 
 
 def normalize(key: str) -> str:

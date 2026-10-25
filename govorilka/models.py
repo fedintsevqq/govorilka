@@ -79,7 +79,7 @@ def _expected_bytes(resolver: Any, quantization: str | None = None) -> int | Non
         return None
 
 
-def _folder_bytes(folder: Path) -> int:
+def folder_bytes(folder: Path) -> int:
     total = 0
     for path in folder.rglob("*"):
         try:
@@ -152,7 +152,7 @@ def _download(kind: str, name: str, label: str, on_status: StatusCallback) -> No
 
     def report() -> None:
         while not done.wait(POLL_S):
-            on_status(format_progress(label, _folder_bytes(folder), total))
+            on_status(format_progress(label, folder_bytes(folder), total))
 
     threading.Thread(target=report, name=f"download-{name}", daemon=True).start()
     try:

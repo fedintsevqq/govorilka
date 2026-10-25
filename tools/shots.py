@@ -157,6 +157,8 @@ def main(out: Path) -> None:
     steps.append(lambda: invoke("feed", "clearSelection"))
     steps.append(lambda: invoke("settings", "open"))
     steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings.png"))
+    steps.append(lambda: invoke("settings", "showCatalog"))
+    steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings-catalog.png"))
     steps.append(lambda: (offer_update(False), invoke("settings", "showUpdates")))
     steps.append(lambda: shoot(backend, root.findChild(QObject, "settings"), out / "3-settings-updates.png"))
     steps.append(lambda: (root.findChild(QObject, "settings").close(), invoke("radial", "dismiss"))[1])

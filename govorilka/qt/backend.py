@@ -10,6 +10,7 @@ import functools
 import gc
 import re
 import logging
+import shutil
 import math
 import sys
 import threading
@@ -40,6 +41,7 @@ from govorilka.hotkeys import (
 )
 from govorilka.pipeline import TextEvent
 from govorilka import ai, asr_models, installer, permissions, updates, version
+from govorilka import models as model_files  # имя models занято свойством со списком моделей
 from govorilka.qt import autopaste, mac_overlay
 from govorilka.qt.foreground import allow_foreground_handoff, bring_to_front
 from govorilka.qt.models import TranscriptModel
@@ -148,6 +150,11 @@ class Backend(QObject):
     _hotkey_in = Signal()
     _release_in = Signal()
     _dictation_in = Signal(str)
+    _catalog_in = Signal(object)
+    _model_progress_in = Signal(float)
+    _model_done_in = Signal(str, str)
+    catalogChanged = Signal()  # noqa: N815
+    catalogProgress = Signal()  # noqa: N815
     _dictation_text_in = Signal(str)
     dictationChanged = Signal()  # noqa: N815
     dictationLevelChanged = Signal()  # noqa: N815
@@ -194,6 +201,9 @@ class Backend(QObject):
         self._ai_busy = False
         self._installing = False
         self._update: updates.UpdateInfo | None = None
+        self._downloaded: dict[str, bool] = {}
+        self._model_download = ""
+        self._model_fraction = 0.0
         self._dictation_phase = ""
         self._dictation_note = ""
         self._dictation_level = 0.0
@@ -231,6 +241,9 @@ class Backend(QObject):
             (self._update_in, self._on_update),
             (self._install_in, self._on_install_done),
             (self._dictation_in, self._on_dictation),
+            (self._catalog_in, self._on_catalog),
+            (self._model_progress_in, self._on_model_progress),
+            (self._model_done_in, self._on_model_done),
             (self._dictation_text_in, self._on_dictation_text),
         ):
             signal.connect(slot)
@@ -323,6 +336,93 @@ class Backend(QObject):
         return asr_models.catalog_entries() + [{"id": CUSTOM_MODEL_ITEM, "label": "Своя модель…"}]
 
     models = Property("QVariantList", _get_models, constant=True)
+
+    # ---------- каталог моделей распознавания ----------
+
+    def _catalog_maps(self) -> list[dict[str, object]]:
+        return [
+            {
+                "key": m.key, "title": m.title, "blurb": m.blurb, "languages": m.languages, "sizeMb": m.size_mb,
+                "accuracy": m.accuracy, "speed": m.speed, "punctuation": m.punctuation, "recommended": m.recommended,
+                "downloaded": self._downloaded.get(m.key, False),
+            }
+            for m in asr_models.CATALOG
+        ]
+
+    catalog = Property("QVariantList", _catalog_maps, notify=catalogChanged)
+    modelDownloading = Property(str, lambda self: self._model_download, notify=catalogChanged)  # noqa: N815
+    modelDownloadFraction = Property(float, lambda self: self._model_fraction, notify=catalogProgress)  # noqa: N815
+
+    @Slot()
+    @safe_slot
+    def refreshCatalog(self) -> None:  # noqa: N802
+        """Какие модели уже скачаны: проверяем по папкам, когда открывают настройки."""
+
+        def work() -> None:
+            found = {m.key: model_files.is_downloaded("asr", m.key) for m in asr_models.CATALOG}
+            self._catalog_in.emit(found)
+
+        threading.Thread(target=work, name="catalog-scan", daemon=True).start()
+
+    def _on_catalog(self, found: dict) -> None:
+        self._downloaded = dict(found)
+        self.catalogChanged.emit()
+
+    @Slot(str)
+    @safe_slot
+    def downloadModel(self, key: str) -> None:  # noqa: N802
+        """«Скачать» у модели в каталоге: качаем заранее, чтобы первая запись не ждала."""
+        entry = asr_models.CATALOG_BY_KEY.get(key)
+        if entry is None or self._model_download:
+            return
+        self._model_download, self._model_fraction = key, 0.0
+        self.catalogChanged.emit()
+
+        def progress(text: str) -> None:
+            match = re.search(r"\((\d+)%\)", text)
+            if match:
+                self._model_progress_in.emit(int(match.group(1)) / 100)
+
+        def work() -> None:
+            try:
+                model_files.ensure_downloaded("asr", key, entry.title, progress)
+                self._model_done_in.emit(key, "")
+            except Exception as exc:  # noqa: BLE001 — нет сети, не хватило места: человек должен узнать
+                log.warning("Модель %s не скачалась: %s", key, exc)
+                self._model_done_in.emit(key, str(exc))
+
+        threading.Thread(target=work, name="model-download", daemon=True).start()
+
+    def _on_model_progress(self, fraction: float) -> None:
+        self._model_fraction = fraction
+        self.catalogProgress.emit()
+
+    def _on_model_done(self, key: str, error: str) -> None:
+        self._model_download = ""
+        title = asr_models.CATALOG_BY_KEY[key].title
+        if error:
+            self.toast.emit(f"{title} не скачалась: {error}. Проверьте интернет и попробуйте ещё раз", "error")
+        else:
+            self._downloaded[key] = True
+            self.toast.emit(f"{title} скачана: можно выбрать её и сохранить настройки", "success")
+        self.catalogChanged.emit()
+
+    @Slot(str)
+    @safe_slot
+    def deleteModel(self, key: str) -> None:  # noqa: N802
+        """Корзина у скачанной модели: освобождаем место на диске."""
+        entry = asr_models.CATALOG_BY_KEY.get(key)
+        if entry is None:
+            return
+        if key == self.controller.settings.model:
+            self.toast.emit("Эта модель сейчас выбрана. Сначала выберите другую и сохраните настройки", "info")
+            return
+        folder = asr_models.parse(key).local_dir
+        freed = model_files.folder_bytes(folder) // model_files.MB if folder.exists() else 0
+        shutil.rmtree(folder, ignore_errors=True)
+        self._downloaded[key] = False
+        self.catalogChanged.emit()
+        self.toast.emit(f"{entry.title} удалена" + (f": освобождено {freed} МБ" if freed else ""), "success")
     customTypes = Property(  # noqa: N815
         "QVariantList",
         lambda self: [{"id": key, "label": label, "files": files} for key, label, files in asr_models.CUSTOM_TYPES],

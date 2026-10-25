@@ -19,7 +19,25 @@ def test_catalog_models_and_their_int8_versions_are_parsed():
     assert light.quantization == "int8" and light.load_name == "gigaam-v3-e2e-rnnt"
     assert light.local_dir == MODELS_DIR / "gigaam-v3-e2e-rnnt@int8"  # рядом с обычной: файлы не смешиваются
     ids = [entry["id"] for entry in asr_models.catalog_entries()]
-    assert ids == ["gigaam-v3-e2e-rnnt", "gigaam-v3-e2e-ctc", "gigaam-v3-e2e-rnnt@int8", "gigaam-v3-e2e-ctc@int8"]
+    assert ids[:4] == ["gigaam-v3-e2e-rnnt", "gigaam-v3-e2e-ctc", "gigaam-v3-e2e-rnnt@int8", "gigaam-v3-e2e-ctc@int8"]
+
+
+def test_every_catalog_model_parses_into_its_own_folder_and_onnx_asr_knows_it():
+    import inspect
+
+    from onnx_asr import loader
+
+    known = inspect.getsource(loader)
+    folders = set()
+    for model in asr_models.CATALOG:
+        ref = asr_models.parse(model.key)
+        assert f'"{ref.load_name}"' in known, model.key  # имя, которое понимает onnx-asr
+        assert "/" not in ref.local_dir.name and ref.local_dir.parent == MODELS_DIR
+        folders.add(ref.local_dir)
+        assert 1 <= model.speed <= 5 and 80 <= model.accuracy <= 100 and model.size_mb > 0
+    assert len(folders) == len(asr_models.CATALOG)  # у каждой модели своя папка
+    assert asr_models.parse("t-tech/t-one").local_dir == MODELS_DIR / "t-tech--t-one"
+    assert [m.key for m in asr_models.CATALOG if m.recommended] == ["gigaam-v3-e2e-rnnt"]
 
 
 def test_hugging_face_models_need_an_author_slash_repository_address():

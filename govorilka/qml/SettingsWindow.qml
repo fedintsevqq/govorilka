@@ -25,16 +25,6 @@ Window {
     property bool customChecking: false
     property string customMessage: ""
     property bool customOk: false
-    readonly property var modelItems: {
-        const items = backend.models.slice(0, -1)
-        if (customKey !== "") items.push({ id: customKey, label: backend.modelLabel(customKey) })
-        items.push(backend.models[backend.models.length - 1])
-        return items
-    }
-    function modelIndex(key) {
-        for (let i = 0; i < modelItems.length; ++i) if (modelItems[i].id === key) return i
-        return 0
-    }
     Connections {
         target: backend
         function onCustomModelChecked(ok, message, key) {
@@ -44,7 +34,7 @@ Window {
             if (ok) {
                 win.customKey = key
                 win.setValue("model", key)
-                modelBox.currentIndex = win.modelIndex(key)
+                win.customOpen = false
             }
         }
     }   // как было при открытии: сохраняем только то, что поменяли здесь
@@ -72,7 +62,8 @@ Window {
         customOpen = false
         customChecking = false
         customMessage = ""
-        modelBox.currentIndex = modelIndex(draft.model)
+        catalogList.expanded = false
+        backend.refreshCatalog()
         aiBox.currentIndex = Math.max(0, aiBox.find(draft.ai_target))
         openBox.currentIndex = draft.ai_open_in === "browser" ? 1 : 0
         unloadBox.currentIndex = Math.max(0, [5, 10, 30, 0].indexOf(draft.unload_after_min))
@@ -192,6 +183,7 @@ Window {
         onAccepted: if (target) target.text = selectedFolder.toString().replace(/^file:\/\/\//, "")
     }
 
+    function showCatalog() { catalogList.expanded = true; scroll.contentItem.contentY = Math.max(0, catalogList.mapToItem(scroll.contentItem.contentItem, 0, 0).y - 60) }   // для снимков
     function showUpdates() { scroll.contentItem.contentY = Math.max(0, updatesSection.y - 12) }   // для снимков интерфейса
 
     ScrollView {
@@ -329,19 +321,61 @@ Window {
             Section {
                 heading: "Запись"
                 Label { text: "Модель распознавания" }
-                ComboField {
-                    id: modelBox
-                    model: win.modelItems
-                    textRole: "label"
-                    onActivated: {
-                        const id = win.modelItems[currentIndex].id
-                        if (id === "__custom__") {
-                            win.customOpen = true                       // откроем выбор своей модели; пока не проверена, прежняя остаётся
-                            currentIndex = win.modelIndex(win.draft.model)
-                        } else {
-                            win.customOpen = false
-                            win.setValue("model", id)
+                // Каталог: сначала видна только выбранная модель, «Все модели» раскрывают остальные.
+                ColumnLayout {
+                    id: catalogList
+                    Layout.fillWidth: true
+                    spacing: 8
+                    property bool expanded: false
+                    readonly property bool customChosen: backend.isCustomModel(win.draft.model || "")
+                    Repeater {
+                        model: backend.catalog
+                        ModelCard {
+                            required property var modelData
+                            info: modelData
+                            selected: win.draft.model === modelData.key
+                            visible: catalogList.expanded || selected
+                            onChoose: { win.customOpen = false; win.setValue("model", modelData.key) }
                         }
+                    }
+                    Rectangle {   // выбрана своя модель
+                        visible: catalogList.customChosen
+                        Layout.fillWidth: true
+                        implicitHeight: 52
+                        radius: 14
+                        color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.12 : 0.08)
+                        border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55)
+                        Text {
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 16; rightMargin: 16 }
+                            elide: Text.ElideMiddle
+                            text: backend.modelLabel(win.draft.model || "")
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
+                            color: Theme.text
+                        }
+                    }
+                    RowLayout {
+                        spacing: 8
+                        PillButton {
+                            text: catalogList.expanded ? "Свернуть" : "Все модели (" + backend.catalog.length + ")"
+                            iconName: "chevron"
+                            tip: "Другие модели: для звонков, других языков, слабых компьютеров"
+                            onClicked: catalogList.expanded = !catalogList.expanded
+                        }
+                        PillButton {
+                            text: "Своя модель…"
+                            tip: "Модель с Hugging Face или из папки на компьютере"
+                            onClicked: win.customOpen = !win.customOpen
+                        }
+                    }
+                    Text {
+                        visible: catalogList.expanded
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "Точность — сколько слов из 100 модель пишет верно на русской речи, скорость — насколько быстро она работает на обычном процессоре (замеры onnx-asr). У моделей с пунктуацией точность чуть ниже из-за того, как её считают, а читать их текст удобнее. Выбранная модель скачается при первой записи, если не скачать её заранее."
+                        font.pixelSize: 12
+                        lineHeight: 1.2
+                        color: Theme.textTertiary
                     }
                 }
 
@@ -625,7 +659,7 @@ Window {
     // Esc в открытом списке закрывает только список, а не всё окно
     Shortcut {
         sequences: ["Escape"]
-        enabled: !actionBox.popup.visible && !modelBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible && !customType.popup.visible
+        enabled: !actionBox.popup.visible && !themeBox.popup.visible && !aiBox.popup.visible && !unloadBox.popup.visible && !customType.popup.visible
         onActivated: win.close()
     }
 }

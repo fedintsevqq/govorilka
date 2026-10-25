@@ -1031,3 +1031,40 @@ def test_dictation_phase_and_level_reach_qml(backend):
     assert backend.dictationPhase == "listening" and backend.dictationLevel > 0.5
     backend._on_dictation("")
     assert backend.dictationPhase == "" and backend.dictationLevel == 0
+
+
+# ---------- каталог моделей ----------
+
+
+def test_catalog_download_reports_progress_and_marks_the_model(backend, qapp, monkeypatch):
+    from govorilka import models as model_files
+
+    def fake_download(kind, key, label, on_status):
+        on_status(model_files.format_progress(label, 50 * model_files.MB, 100 * model_files.MB))
+        time.sleep(0.2)
+
+    import time
+
+    monkeypatch.setattr(model_files, "ensure_downloaded", fake_download)
+    backend.downloadModel("t-tech/t-one")
+    assert backend.modelDownloading == "t-tech/t-one"
+    assert pump(qapp, lambda: backend.modelDownloadFraction == 0.5)
+    assert pump(qapp, lambda: backend.modelDownloading == "")
+    entry = next(m for m in backend.catalog if m["key"] == "t-tech/t-one")
+    assert entry["downloaded"] is True and entry["accuracy"] == 93
+
+
+def test_catalog_refuses_to_delete_the_chosen_model_and_deletes_another(backend, monkeypatch, tmp_path):
+    from govorilka import asr_models
+
+    toasts = []
+    backend.toast.connect(lambda text, kind: toasts.append(text))
+    backend.deleteModel(backend.controller.settings.model)
+    assert "сейчас выбрана" in toasts[-1]
+    folder = tmp_path / "vosk"
+    folder.mkdir()
+    (folder / "model.onnx").write_bytes(b"0" * 2_000_000)
+    real_parse = asr_models.parse
+    monkeypatch.setattr(asr_models, "parse", lambda key: real_parse(key).__class__(**{**real_parse(key).__dict__, "local_dir": folder}))
+    backend.deleteModel("alphacep/vosk-model-small-ru@int8")
+    assert not folder.exists() and "освобождено 1 МБ" in toasts[-1]

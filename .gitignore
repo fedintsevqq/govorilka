@@ -20,3 +20,4 @@ govorilka.lock
 govorilka.port
 selftest-ui.txt
 govorilka.log.*
+dist-try/

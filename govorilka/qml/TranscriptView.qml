@@ -290,7 +290,7 @@ Item {
                 selectedTextColor: Theme.text
                 readonly property var range: root.rangeFor(speech.parent.index, length)
                 function applyRange() { if (range[1] > range[0]) select(range[0], range[1]); else deselect() }
-                onRangeChanged: applyRange()
+                onRangeChanged: Qt.callLater(applyRange)   // не внутри привязки: select() меняет поле, и Qt видел бы петлю
                 Component.onCompleted: applyRange()
                 HoverHandler { cursorShape: Qt.IBeamCursor }
                 Rectangle {   // курсор недосказанной фразы

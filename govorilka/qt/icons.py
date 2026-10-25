@@ -58,6 +58,11 @@ ICONS: dict[str, tuple[str, bool]] = {
         False,
     ),
     "close": ('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>', False),
+    "trash": (
+        '<path d="M4.5 7h15M9.5 7V5.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2V7"/>'
+        '<path d="M6.5 7l.8 11.2c.1 1 .9 1.8 1.9 1.8h5.6c1 0 1.8-.8 1.9-1.8L17.5 7M10.3 11v5.2M13.7 11v5.2"/>',
+        False,
+    ),
     "check": ('<path d="M5 12.6l4.3 4.2L19 7.2"/>', False),
     "chevron": ('<path d="M9.5 6l6 6-6 6"/>', False),
     "keyboard": (
