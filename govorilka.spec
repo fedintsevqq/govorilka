@@ -121,7 +121,15 @@ if IS_MAC:
             "LSMinimumSystemVersion": MAC_MIN_OS,
             "NSHighResolutionCapable": True,
             "NSMicrophoneUsageDescription": "Говорилка записывает ваш голос, чтобы расшифровать созвон.",
-            "NSAppleEventsUsageDescription": "Говорилка открывает Терминал, чтобы передать транскрипт в Claude Code.",
+            "NSAppleEventsUsageDescription": (
+                "Говорилка открывает Терминал, чтобы передать транскрипт в Claude Code, и вставляет текст "
+                "диктовки и разговор в окно нейросети."
+            ),
+            # Говорилка обычно свёрнута в строку меню, пока идёт звонок: macOS не должна усыплять её (App Nap) —
+            # иначе горячая клавиша и диктовка срабатывали бы с опозданием, а распознавание отставало бы от речи
+            "NSAppSleepDisabled": True,
+            # MacBook Pro с двумя видеокартами: не держать мощную включённой всё время (батарея, шум)
+            "NSSupportsAutomaticGraphicsSwitching": True,
         },
     )
 else:

@@ -47,7 +47,13 @@ def set_activation_policy(accessory: bool) -> bool:
         policy = ACTIVATION_ACCESSORY if accessory else ACTIVATION_REGULAR
         ok = bool(objc_bridge.send(objc, app, "setActivationPolicy:", ctypes.c_bool, (ctypes.c_long,), (policy,)))
         if ok and not accessory:
-            objc_bridge.send(objc, app, "activateIgnoringOtherApps:", None, (ctypes.c_bool,), (True,))
+            # macOS 14+: activateIgnoringOtherApps: устарел и часто не выводит окно вперёд — там есть [NSApp activate]
+            modern = objc_bridge.send(objc, app, "respondsToSelector:", ctypes.c_bool, (ctypes.c_void_p,),
+                                      (objc.sel_registerName(b"activate"),))
+            if modern:
+                objc_bridge.send(objc, app, "activate", None)
+            else:
+                objc_bridge.send(objc, app, "activateIgnoringOtherApps:", None, (ctypes.c_bool,), (True,))
         return ok
     except Exception:  # noqa: BLE001
         log.exception("Не переключил политику активации")

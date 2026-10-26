@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 from govorilka.hotkeys import DEFAULT_DICTATION_HOTKEY, DEFAULT_HOTKEY
@@ -147,18 +148,35 @@ class Settings:
         return Path(self.claude_workdir) if self.claude_workdir else self.transcripts_path
 
 
+RECOVERED: list[Path] = []  # куда отложен испорченный файл настроек: окно скажет об этом при запуске
+
+
+def _recover(path: Path, reason: object) -> Settings:
+    """Файл настроек испорчен: откладываем его (вдруг человек захочет восстановить) и работаем как у прежнего
+    пользователя, а не как при первой установке — без нового знакомства и без самовольного включения автозапуска."""
+    log.warning("Не прочитал %s, беру настройки по умолчанию: %s", path, reason)
+    backup = path.with_name(f"{path.name}.bad-{datetime.now():%Y%m%d-%H%M%S}")
+    try:
+        path.replace(backup)
+        RECOVERED.append(backup)
+    except OSError:
+        log.exception("Не отложил испорченный файл настроек")
+    return replace(Settings(), tour_done=True, autostart_initialized=True)
+
+
 def load_settings(path: Path = SETTINGS_FILE) -> Settings:
     """Читает настройки; битый или чужой файл не должен мешать запуску."""
     if not path.exists():
         return Settings()
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))  # utf-8-sig: Блокнот добавляет BOM
-    except (OSError, ValueError) as exc:  # ValueError покрывает и битый JSON, и не-UTF-8
+    except OSError as exc:  # файл не открыть (занят, нет прав): ничего не трогаем
         log.warning("Не прочитал %s, беру настройки по умолчанию: %s", path, exc)
-        return Settings()
+        return replace(Settings(), tour_done=True, autostart_initialized=True)
+    except ValueError as exc:  # битый JSON или не UTF-8
+        return _recover(path, exc)
     if not isinstance(data, dict):
-        log.warning("В %s не объект настроек, беру настройки по умолчанию", path)
-        return Settings()
+        return _recover(path, "в файле не объект настроек")
     defaults = Settings()
     if _same_path(data.get("transcripts_dir"), OLD_DEFAULT_TRANSCRIPTS_DIRS) and data.get("settings_version", 1) < 2:
         data.pop("transcripts_dir")  # папку никто не выбирал, это был прежний вариант по умолчанию: берём «Загрузки»
@@ -175,7 +193,8 @@ def load_settings(path: Path = SETTINGS_FILE) -> Settings:
 
     if not asr_models.is_valid(settings.model):
         settings = replace(settings, model=DEFAULT_MODEL)
-    return settings
+    # миграции выполнены: номер версии свежий, иначе выбранную потом папку «Документы» мигрировали бы снова
+    return replace(settings, settings_version=SETTINGS_VERSION)
 
 
 def _same_path(value: object, candidates: tuple[Path, ...]) -> bool:
@@ -185,10 +204,13 @@ def _same_path(value: object, candidates: tuple[Path, ...]) -> bool:
     return any(normalized == os.path.normcase(os.path.normpath(str(c))) for c in candidates)
 
 
-def save_settings(settings: Settings, path: Path = SETTINGS_FILE) -> None:
+def save_settings(settings: Settings, path: Path = SETTINGS_FILE) -> bool:
+    """False — не сохранились (нет места, нет прав): окно должно об этом сказать."""
     from govorilka.transcript import write_atomic  # через временный файл: сбой посреди записи не портит настройки
 
     try:
         write_atomic(path, json.dumps(asdict(settings), ensure_ascii=False, indent=2))
     except OSError as exc:
         log.error("Не сохранил настройки в %s: %s", path, exc)
+        return False
+    return True

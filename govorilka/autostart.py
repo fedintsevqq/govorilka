@@ -52,6 +52,9 @@ def launch_agent_plist(command: list[str]) -> bytes:
             "ProgramArguments": command,
             "RunAtLoad": True,
             "ProcessType": "Interactive",
+            # «Объекты входа» показывают запись как «Говорилка» с её значком, а не как программу неизвестного
+            # разработчика; удалили программу — macOS понимает, чья это запись
+            "AssociatedBundleIdentifiers": [BUNDLE_ID],
         }
     )
 

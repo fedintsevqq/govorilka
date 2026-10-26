@@ -73,6 +73,7 @@ class Session:
         self._watcher: threading.Thread | None = None
         self._device_lock = threading.Lock()  # переподключение и остановка не должны пересекаться
         self._closed = False
+        self._started = True  # False — запуск не удался, и сохранять нечего
         self._canceller: EchoCanceller | None = None
         self._diarizers: dict[str, Diarizer] = {}
         self._t0 = time.monotonic()
@@ -108,6 +109,7 @@ class Session:
                 denied = next((exc for _, exc in errors if isinstance(exc, PermissionDeniedError)), None)
                 raise denied or AudioError("; ".join(f"{speaker}: {exc}" for speaker, exc in errors))
         except Exception:  # не оставляем открытыми уже запущенные потоки и устройства
+            self._started = False  # запись не началась: пустой файл в папке разговоров не нужен
             self.stop()
             raise
         self._watcher = threading.Thread(target=self._watch_devices, name="device-watcher", daemon=True)
@@ -361,6 +363,8 @@ class Session:
                 source.pipeline.stop()
             except Exception:
                 log.exception("Ошибка при остановке распознавания")
+        if not self._started:
+            return None
         with self._lock:
             return self.saver.save()
 

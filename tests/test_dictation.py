@@ -64,6 +64,25 @@ def test_typing_while_holding_the_chord_cancels_dictation():
     assert events == ["start", "cancel"]  # Ctrl+Alt+C — это сочетание, а не диктовка: текст не вставляем
 
 
+@pytest.mark.parametrize("interrupt", ["pause", "turn_off"])
+def test_dictation_is_cancelled_when_the_watcher_pauses_or_dictation_is_turned_off(interrupt):
+    # раньше микрофон писал до предела в 2 минуты и вставлял текст туда, где окажется курсор
+    events = []
+    clock = iter(x * 0.2 for x in range(10_000))
+    watcher = HotkeyWatcher(
+        lambda: None, keyboard=ScriptedKeyboard([snap("ctrl+alt")]), clock=lambda: next(clock),
+        on_dictate_start=lambda: events.append("start"),
+        on_dictate_stop=lambda cancelled: events.append("cancel" if cancelled else "stop"),
+        external_ticks=True,
+    )
+    watcher.set_dictation_chord(parse_chord("ctrl+alt"))
+    for _ in range(4):
+        watcher.tick()
+    assert events == ["start"]
+    watcher.pause() if interrupt == "pause" else watcher.set_dictation_chord(None)
+    assert events == ["start", "cancel"]
+
+
 def test_a_quick_tap_does_not_start_dictation():
     events = run_watcher([snap("ctrl+alt"), snap()] * 3)
     assert events == []

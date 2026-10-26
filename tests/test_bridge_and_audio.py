@@ -92,7 +92,29 @@ def test_settings_roundtrip_and_bad_model(tmp_path):
 def test_broken_settings_file_falls_back(tmp_path):
     path = tmp_path / "s.json"
     path.write_text("{битый", encoding="utf-8")
-    assert load_settings(path) == Settings()
+    settings = load_settings(path)
+    # настройки по умолчанию, но не как у нового пользователя: знакомство не показываем, автозапуск сам не включаем
+    assert settings.model == Settings().model and settings.tour_done and settings.autostart_initialized
+    backups = list(tmp_path.glob("s.json.bad-*"))
+    assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == "{битый"  # испорченный файл не потерян
+
+
+def test_settings_version_is_bumped_after_migration(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text('{"settings_version": 1}', encoding="utf-8")
+    from govorilka.config import SETTINGS_VERSION
+
+    assert load_settings(path).settings_version == SETTINGS_VERSION
+
+
+def test_failed_settings_save_is_reported(tmp_path, monkeypatch):
+    from govorilka import config
+
+    def denied(*_a, **_k):
+        raise PermissionError("нет прав")
+
+    monkeypatch.setattr("govorilka.transcript.write_atomic", denied)
+    assert config.save_settings(Settings(), tmp_path / "s.json") is False
 
 
 # ---------- Claude Code, встроенный в Claude Desktop ----------

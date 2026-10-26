@@ -105,7 +105,7 @@ def controller(tmp_path, monkeypatch):
     from govorilka import controller as controller_module
     from govorilka.config import Settings
 
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
     listener = Listener()
     c = controller_module.Controller(listener, Settings(transcripts_dir=str(tmp_path)), hotkeys=NoHotkeys())
     return c, listener, controller_module

@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -233,12 +235,36 @@ def format_line(u: Utterance, markdown: bool) -> str:
     return f"**{stamp} {u.speaker}:** {u.text}" if markdown else f"{stamp} {u.speaker}: {u.text}"
 
 
+_WRITE_LOCKS: dict[Path, threading.Lock] = {}
+_WRITE_GUARD = threading.Lock()
+
+
 def write_atomic(path: Path, text: str) -> None:
-    """Пишет файл через временный, чтобы читатель (Claude Code) не увидел половину."""
+    """Пишет файл через временный, чтобы читатель (Claude Code) не увидел половину.
+
+    Временный файл у каждой записи свой, и данные сбрасываются на диск до переименования: после внезапного
+    выключения компьютера на месте файла не окажется пустышки. Одновременные записи одного файла идут по очереди."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8", newline="\n")  # одинаковые переводы строк на Windows и Mac
-    os.replace(tmp, path)
+    with _WRITE_GUARD:
+        lock = _WRITE_LOCKS.setdefault(path.resolve(), threading.Lock())
+    with lock:
+        handle, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as out:  # одинаковые переводы строк везде
+                out.write(text)
+                out.flush()
+                os.fsync(out.fileno())
+            for attempt in range(20):
+                try:
+                    os.replace(name, path)
+                    break
+                except PermissionError:  # Windows: файл открыт на чтение у антивируса или редактора
+                    if attempt == 19:
+                        raise
+                    time.sleep(0.1)
+        except BaseException:
+            Path(name).unlink(missing_ok=True)
+            raise
 
 
 def unique_path(path: Path) -> Path:

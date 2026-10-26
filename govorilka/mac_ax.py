@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ctypes
+import time
 import ctypes.util
 from collections.abc import Callable, Iterable
 
@@ -97,6 +98,8 @@ class _Api:
         self.set_flags.restype, self.set_flags.argtypes = None, [vp, ctypes.c_uint64]
         self.post = cg.CGEventPost
         self.post.restype, self.post.argtypes = None, [ctypes.c_uint32, vp]
+        self.set_timeout = ax.AXUIElementSetMessagingTimeout
+        self.set_timeout.restype, self.set_timeout.argtypes = ctypes.c_int32, [vp, ctypes.c_float]
         self._names: dict[str, int] = {}
 
     def name(self, text: str) -> int:
@@ -160,7 +163,11 @@ def _frontmost_pid() -> int:
     return int(objc_bridge.send(objc, app, "processIdentifier", ctypes.c_int32))
 
 
-def _with_front_window(action: Callable[[_Api, int, int], object]) -> object:
+AX_TIMEOUT_S = 0.5  # зависший браузер не держит поиск поля по 6 секунд на каждый вопрос
+SEARCH_BUDGET_S = 3.0  # весь поиск поля ввода: дольше — окно впереди уже могло смениться
+
+
+def _with_front_window(action: Callable[[_Api, int, int], object], build_tree: bool = False) -> object:
     api = _get_api()
     if not api.trusted():
         raise NotTrustedError("нет «Универсального доступа»")
@@ -169,9 +176,12 @@ def _with_front_window(action: Callable[[_Api, int, int], object]) -> object:
         return None
     app = api.create_app(pid)
     try:
-        # Chrome и Electron строят дерево специальных возможностей для страницы только по этой просьбе
-        api.set_attr(app, api.name("AXManualAccessibility"), api.true)
-        api.set_attr(app, api.name("AXEnhancedUserInterface"), api.true)
+        api.set_timeout(app, AX_TIMEOUT_S)
+        if build_tree:
+            # Chrome и Electron строят дерево специальных возможностей страницы только по этой просьбе. Просим лишь
+            # при поиске поля ввода в окне чата: у других программ (Slack, VS Code) это нагружало бы процессор.
+            # AXEnhancedUserInterface не трогаем: он ломает анимацию окон и программы вроде Rectangle.
+            api.set_attr(app, api.name("AXManualAccessibility"), api.true)
         window = api.attr(app, "AXFocusedWindow")
         if not window:
             return None
@@ -197,7 +207,8 @@ def focus_chat_input() -> bool:
         try:
             nodes: list[tuple[object, str, float, str]] = []
             stack, seen = [(window, 0)], 0
-            while stack and seen < MAX_NODES:
+            deadline = time.monotonic() + SEARCH_BUDGET_S
+            while stack and seen < MAX_NODES and time.monotonic() < deadline:
                 element, depth = stack.pop()
                 seen += 1
                 role = api.string_attr(element, "AXRole")
@@ -223,7 +234,7 @@ def focus_chat_input() -> bool:
             for array in arrays:
                 api.release(array)
 
-    return bool(_with_front_window(find))
+    return bool(_with_front_window(find, build_tree=True))
 
 
 def press_paste() -> None:

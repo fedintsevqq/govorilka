@@ -107,7 +107,7 @@ def app(monkeypatch, tmp_path):
     FakeSession.gate.set()
     monkeypatch.setattr(controller_module, "Session", FakeSession)
     monkeypatch.setattr(controller_module, "load_engines", lambda *a, **k: object())
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
     listener = Recorder()
     return Controller(listener, Settings(transcripts_dir=str(tmp_path)), hotkeys=FakeHotkeys()), listener
 
@@ -281,3 +281,116 @@ def test_unloading_asks_the_interface_for_garbage_collection_instead_of_doing_it
     events.on_models_unloaded = lambda: calls.append(1)
     c.engines = object()
     assert c.unload_models() and calls == [1]
+
+
+# ---------- QA: остановка, сохранение, подсказки, итоги ----------
+
+
+def test_stop_reports_when_the_final_save_failed(app, monkeypatch):
+    c, events = app
+    monkeypatch.setattr(FakeSession, "stop", lambda self: None)  # диск полон: сохранить не удалось
+    assert c.start_recording()
+    assert wait_for(lambda: c.state == AppState.RECORDING)
+    c.stop_recording()
+    assert wait_for(lambda: c.state == AppState.IDLE)
+    assert not events.finished and any("не сохранился" in e for e in events.errors)
+
+
+def test_hints_are_not_left_running_when_the_recording_stops_while_starting(app, monkeypatch):
+    c, _ = app
+    started = []
+    monkeypatch.setattr(Controller, "_start_assistant", lambda self: started.append(self.session))
+    c.settings = Settings(transcripts_dir=c.settings.transcripts_dir, assistant_enabled=True)
+    FakeSession.gate.clear()
+    assert c.start_recording()
+    original_set_state = c._set_state
+
+    def stop_right_after_recording(state):
+        original_set_state(state)
+        if state == AppState.RECORDING:
+            c.stop_recording()  # остановили ровно между «запись идёт» и запуском подсказок
+
+    c._set_state = stop_right_after_recording
+    FakeSession.gate.set()
+    assert wait_for(lambda: c.state == AppState.IDLE)
+    assert started == []
+
+
+def test_same_chord_is_found_whatever_the_spelling():
+    from govorilka.controller import _same_chord
+    from govorilka.hotkeys import parse_chord
+
+    assert _same_chord("Shift+Ctrl", parse_chord("ctrl + shift"))
+    assert not _same_chord("ctrl+alt", parse_chord("ctrl+shift"))
+    assert not _same_chord("бред", parse_chord("ctrl+shift"))
+
+
+def test_summary_goes_into_its_own_file_even_if_a_new_recording_started(app, monkeypatch, tmp_path):
+    from govorilka import summary
+    from govorilka.transcript import Transcript, Utterance
+
+    c, _ = app
+    old = Transcript(datetime_now(), "Старый")
+    old.add(Utterance("Я", 1.0, "Релиз в пятницу", 2.0, "mic"))
+    c.transcript, c.last_file = old, tmp_path / "old.md"
+
+    class Server:
+        url, api_key = "http://127.0.0.1:1", "k"
+
+        def __init__(self, *a):
+            pass
+
+        def wait_ready(self, **k):
+            c.transcript, c.last_file = object(), tmp_path / "new.md"  # пока считали, началась новая запись
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(summary, "ensure_engine", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(summary, "ensure_model", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(summary, "LlamaServer", Server)
+    monkeypatch.setattr(summary, "fit", lambda *a: ("ok", ""))
+    monkeypatch.setattr(summary, "summarize", lambda *a, **k: "### Кратко\nРелиз в пятницу.")
+    c.make_summary(lambda _s: None)
+    assert "Релиз в пятницу." in (tmp_path / "old.md").read_text(encoding="utf-8")
+    assert not (tmp_path / "new.md").exists()
+
+
+def test_cancelled_summary_is_not_saved(app, monkeypatch, tmp_path):
+    from govorilka import summary
+    from govorilka.transcript import Transcript, Utterance
+
+    c, _ = app
+    talk = Transcript(datetime_now(), "")
+    talk.add(Utterance("Я", 1.0, "Текст", 2.0, "mic"))
+    c.transcript, c.last_file = talk, tmp_path / "t.md"
+    cancel = threading.Event()
+
+    class Server:
+        def __init__(self, *a):
+            pass
+
+        def wait_ready(self, **k):
+            pass
+
+        def stop(self):
+            pass
+
+    def summarize(*a, **k):
+        cancel.set()  # нажали «Отменить», пока модель отвечала
+        return "### Кратко\nНе должно сохраниться."
+
+    monkeypatch.setattr(summary, "ensure_engine", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(summary, "ensure_model", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(summary, "LlamaServer", Server)
+    monkeypatch.setattr(summary, "fit", lambda *a: ("ok", ""))
+    monkeypatch.setattr(summary, "summarize", summarize)
+    with pytest.raises(summary.SummaryError, match="Отменено"):
+        c.make_summary(lambda _s: None, cancel.is_set)
+    assert not (tmp_path / "t.md").exists() and not talk.summary
+
+
+def datetime_now():
+    from datetime import datetime
+
+    return datetime.now()

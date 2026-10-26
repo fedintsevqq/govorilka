@@ -283,7 +283,7 @@ def test_tour_practice_opens_the_menu_even_when_the_hotkey_starts_recording(back
 def test_finishing_the_tour_is_remembered(backend, qapp, monkeypatch):
     from govorilka import controller as controller_module
 
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
     assert backend.settings["tour_done"] is False
     backend.setTourActive(True)
     backend.finishTour()
@@ -315,7 +315,7 @@ def test_mark_without_recording_explains_itself(backend, qapp):
 def test_applying_settings_saves_and_reports(backend, qapp, monkeypatch):
     from govorilka import controller as controller_module
 
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
     toasts = []
     backend.toast.connect(lambda text, kind: toasts.append((text, kind)))
     backend.applySettings({"theme": "dark", "hotkey": "ctrl+alt+r", "capture_mic": False}, False)
@@ -499,7 +499,7 @@ def test_rows_keep_grouping_and_color_after_a_speaker_is_renamed(qapp):
 def test_backend_rename_updates_the_feed_and_confirms(backend, qapp, tmp_path, monkeypatch):
     from govorilka import controller as controller_module
 
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
     transcript = Transcript(datetime(2026, 1, 1), "т")
     transcript.add(Utterance("Собеседник 1", 3, "привет", 5, "system", "Собеседник 1"))
     backend.controller.transcript = transcript
@@ -813,7 +813,7 @@ def test_skipped_version_is_not_offered_again_by_the_automatic_check(backend, qa
     from govorilka import controller as controller_module
     from govorilka import updates
 
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
     newer = updates.UpdateInfo("9.9.9", "https://example/p", "", "", "", 0, "")
     monkeypatch.setattr(updates, "check", lambda: newer)
     backend.checkForUpdates()

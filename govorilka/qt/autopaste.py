@@ -127,14 +127,16 @@ class NoInputError(RuntimeError):
     """Поле ввода чата не нашлось (страница ошибки, вход в аккаунт): вставлять некуда."""
 
 
-def _windows_paste() -> None:
+def _windows_paste(still_there: Callable[[], bool] = lambda: True) -> None:
     try:
         found = _windows_focus_input()
-    except Exception as exc:  # noqa: BLE001 — поиск поля не удался: вставляем туда, где курсор (чаты обычно ставят его сами)
+    except Exception as exc:  # noqa: BLE001 — поиск поля не удался: вслепую не вставляем, разговор остаётся в буфере
         log.warning("Не искал поле ввода через UI Automation: %s", exc)
-        found = True
+        found = False
     if not found:
         raise NoInputError("поле ввода чата не нашлось")
+    if not still_there():  # пока искали поле, впереди оказалось другое окно: туда разговор не вставляем
+        raise NoInputError("окно чата ушло назад")
     user32 = ctypes.windll.user32
     user32.keybd_event(VK_CONTROL, 0, 0, 0)
     user32.keybd_event(VK_V, 0, 0, 0)
@@ -172,7 +174,7 @@ def _mac_title() -> str:
         raise NoPermissionError(str(exc)) from exc
 
 
-def _mac_paste() -> None:
+def _mac_paste(still_there: Callable[[], bool] = lambda: True) -> None:
     """Курсор в поле ввода чата, потом ⌘V. Поля не нашли — вставлять некуда (страница входа, ошибка)."""
     from govorilka import mac_ax
 
@@ -180,11 +182,13 @@ def _mac_paste() -> None:
         found = mac_ax.focus_chat_input()
     except mac_ax.NotTrustedError as exc:
         raise NoPermissionError(str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — поиск поля не удался: вставляем туда, где курсор (чаты обычно ставят его сами)
+    except Exception as exc:  # noqa: BLE001 — поиск поля не удался: вслепую не вставляем, разговор остаётся в буфере
         log.warning("Не искал поле ввода через специальные возможности: %s", exc)
-        found = True
+        found = False
     if not found:
         raise NoInputError("поле ввода чата не нашлось")
+    if not still_there():  # пока искали поле, впереди оказалось другое окно (мессенджер): туда не вставляем
+        raise NoInputError("окно чата ушло назад")
     mac_ax.press_paste()
 
 
@@ -202,7 +206,9 @@ def paste_when_ready(
     Блокирует: зовите из фонового потока. NoPermissionError — на Mac нет «Универсального доступа»."""
     mac = sys.platform == "darwin"
     title = title or (_mac_title if mac else _windows_title)
-    paste = paste or (_mac_paste if mac else _windows_paste)
+    if paste is None:
+        native = _mac_paste if mac else _windows_paste
+        paste = lambda: native(lambda: matches(title(), target) and not is_login(title()))  # noqa: E731
     deadline = clock() + WAIT_S
     seen_at: float | None = None
     pasted = 0

@@ -278,7 +278,7 @@ def make_controller(tmp_path, monkeypatch, remember=False):
     from govorilka.controller import Controller, Listener
 
     monkeypatch.setattr(controller_module, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(controller_module, "save_settings", lambda s: None)
+    monkeypatch.setattr(controller_module, "save_settings", lambda s: True)
 
     class Hotkeys:
         def set_chord(self, c): ...

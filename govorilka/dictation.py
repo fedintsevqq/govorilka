@@ -58,10 +58,12 @@ class Dictation:
     def finish(self) -> str:
         """Закрывает микрофон, дораспознаёт последнюю фразу и возвращает весь текст."""
         self._close()
-        for event in self._segmenter.flush():
-            self._submit(event.audio)
-        texts = [part.result() or "" for part in self._parts]
-        self._recognize.shutdown(wait=True)
+        try:
+            for event in self._segmenter.flush():
+                self._submit(event.audio)
+            texts = [part.result() or "" for part in self._parts]
+        finally:  # ошибка распознавания не должна оставлять поток диктовки висеть до выхода из программы
+            self._recognize.shutdown(wait=False, cancel_futures=True)
         return join_phrases(texts)
 
     def cancel(self) -> None:

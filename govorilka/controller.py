@@ -101,6 +101,14 @@ class ClaudeResult:
     target: str = ""  # какой это чат: окну нужно, чтобы вставить разговор, когда чат откроется
 
 
+def _same_chord(text: str, chord: object) -> bool:
+    """«Shift+Ctrl» и «ctrl + shift» — одна комбинация: сравниваем разобранные, а не строки."""
+    try:
+        return parse_chord(text) == chord
+    except ValueError:
+        return False
+
+
 class Controller:
     def __init__(
         self,
@@ -117,6 +125,8 @@ class Controller:
         self.transcript: Transcript | None = None
         self.last_file: Path | None = None
         self._stopping: threading.Thread | None = None
+        self._assistant_lock = threading.RLock()  # подсказки запускает поток записи, останавливает окно
+        self._engines_lock = threading.Lock()
         self._unload_timer: threading.Timer | None = None
         self._update_timer: threading.Timer | None = None
         self.update_info: updates.UpdateInfo | None = None
@@ -155,7 +165,8 @@ class Controller:
         timer.start()
 
     def _auto_check(self) -> None:
-        self.check_for_update(manual=False)
+        if self.settings.check_updates:  # могли выключить после запуска
+            self.check_for_update(manual=False)
         self._schedule_update_check(AUTO_CHECK_EVERY_S)
 
     def check_for_update(self, manual: bool = True) -> None:
@@ -244,6 +255,11 @@ class Controller:
     def startup_notices(self) -> list[str]:
         """Что стоит сказать при запуске: нет разрешения, конфликт с раскладкой, старая версия рядом."""
         notices = []
+        from govorilka.config import RECOVERED
+
+        if RECOVERED:
+            notices.append(f"Файл настроек был испорчен, поэтому настройки сброшены. Прежний файл сохранён как "
+                           f"{RECOVERED[-1].name} в папке данных Говорилки")
         if self.settings.hotkey_enabled and input_monitoring_status() is False:
             request_input_monitoring()
             notices.append(
@@ -274,6 +290,7 @@ class Controller:
         """Выход: дописать запись и расшифровку, остановить опрос клавиш."""
         self._closing = True
         self._stop_assistant()
+        summary.stop_all()  # итоги и подсказки на локальной модели: процесс с гигабайтами памяти не переживёт выход
         if self._update_timer is not None:
             self._update_timer.cancel()
         self.hotkeys.stop()
@@ -299,8 +316,9 @@ class Controller:
     def _ensure_engines(self) -> Engines:
         """Вызывается из фонового потока: при первом запуске модели скачиваются."""
         self._cancel_unload()
-        self.engines = load_engines(self.settings.model, self.listener.on_status, self.engines)
-        return self.engines
+        with self._engines_lock:  # запись, диктовка и файл одновременно: модели грузятся один раз, а не трижды
+            self.engines = load_engines(self.settings.model, self.listener.on_status, self.engines)
+            return self.engines
 
     # ---------- память: модели выгружаются, когда запись не идёт ----------
 
@@ -323,11 +341,16 @@ class Controller:
 
     def unload_models(self) -> bool:
         """Выгружает модели, если ими никто не пользуется. True — выгрузили."""
-        if self.engines is None or self.state != AppState.IDLE or self.busy or self.session is not None:
+        if not self._engines_lock.acquire(blocking=False):  # их как раз загружают для записи или диктовки
             return False
-        if self._dictation_run is not None:
-            return False
-        self.engines = None
+        try:
+            if self.engines is None or self.state != AppState.IDLE or self.busy or self.session is not None:
+                return False
+            if self._dictation_run is not None:
+                return False
+            self.engines = None
+        finally:
+            self._engines_lock.release()
         self._unload_timer = None
         self.listener.on_models_unloaded()  # веса освобождаются сами, когда на них не остаётся ссылок (проверено замером)
         log.info("Модели выгружены из памяти: запись не идёт")
@@ -387,15 +410,18 @@ class Controller:
         self.listener.on_transcript(session.transcript, session.path)
         self._set_state(AppState.RECORDING)
         self.listener.on_status(f"Идёт запись. Автосохранение: {session.path}")
-        if self.settings.assistant_enabled:
-            self._start_assistant()
+        with self._assistant_lock:
+            # запись могли остановить, пока она запускалась: тогда подсказки не нужны
+            if self.settings.assistant_enabled and self.session is session and self._assistant is None:
+                self._start_assistant()
 
     def stop_recording(self) -> None:
         session = self.session
         if session is None or self.state not in (AppState.RECORDING, AppState.PAUSED):
             return
-        self.session = None
-        self._stop_assistant()
+        with self._assistant_lock:  # подсказки, которые как раз запускаются, не переживут остановку записи
+            self.session = None
+            self._stop_assistant()
         self._set_state(AppState.STOPPING)
         self.listener.on_status("Останавливаю, дописываю последние фразы…")
 
@@ -412,6 +438,10 @@ class Controller:
                 self._set_state(AppState.IDLE)
             if failure:
                 self.listener.on_error(failure)
+            elif saved is None:  # диск полон или файл занят: человек должен знать, что хвост разговора не записан
+                where = getattr(session, "path", None)
+                self.listener.on_error(f"Запись остановлена, но файл {where.name if where else 'разговора'} не сохранился. Освободите место "
+                                       "на диске или смените папку в настройках, затем сохраните разговор через «Сохранить как»")
             else:
                 self.listener.on_finished(saved, f"Запись остановлена. Сохранено: {saved}")
             self._schedule_unload()  # после уведомлений: интерфейс узнаёт о конце записи без задержки
@@ -560,7 +590,10 @@ class Controller:
                 log.exception("Ошибка после расшифровки файла")
         self.file_job = None
         self._set_state(AppState.IDLE)
-        if saved is None and error != CANCELLED:
+        if saved is None and error is None:  # файл прочитан, но в нём не нашлось речи
+            self.last_file = None
+            self.listener.on_error("В файле не нашлось речи: проверьте, что в нём есть звук")
+        elif saved is None and error != CANCELLED:
             self.listener.on_error(error or "Не получилось расшифровать файл")
         elif saved is None:
             self.listener.on_finished(None, "Расшифровка отменена")
@@ -696,20 +729,41 @@ class Controller:
         verdict, note = summary.fit(model, summary.total_ram_gb())
         if verdict == "no":
             raise summary.SummaryError(note + ". Выберите модель полегче в настройках, раздел «Итоги»")
+        path = self.last_file  # файл этого разговора: пока считаются итоги, может начаться новая запись
         engine = summary.ensure_engine(on_status, cancelled)
         weights = summary.ensure_model(model, on_status, cancelled)
         self.unload_models()  # модели распознавания сейчас не нужны: отдаём их гигабайт модели итогов
         on_status(f"Загружаю {model.title}…")
         server = summary.LlamaServer(engine, weights)
+        done = threading.Event()
+
+        def stop_on_cancel() -> None:  # «Отменить» обрывает и долгий ответ модели, а не только паузы между частями
+            while not done.wait(0.3):
+                if cancelled():
+                    server.stop()
+                    return
+
+        threading.Thread(target=stop_on_cancel, name="summary-cancel", daemon=True).start()
         try:
             server.wait_ready(cancelled=cancelled)
             text = summary.summarize(server, transcript.to_plain_text(), on_status, cancelled)
+        except summary.SummaryError:
+            if cancelled():
+                raise summary.SummaryError("Отменено") from None
+            raise
         finally:
+            done.set()
             server.stop()
+        if cancelled():
+            raise summary.SummaryError("Отменено")
         if not text:
             raise summary.SummaryError("Модель вернула пустой ответ. Попробуйте ещё раз или выберите другую модель")
         transcript.summary = text
-        self.save_now()
+        if path is not None:
+            try:
+                write_atomic(path, transcript.to_markdown())
+            except OSError as exc:
+                raise summary.SummaryError(f"Итоги готовы, но файл {path.name} не сохранился: {exc.strerror or exc}") from exc
         return text
 
     def open_folder(self) -> None:
@@ -835,12 +889,16 @@ class Controller:
                 "assistant_enabled", "assistant_source", "assistant_api_preset", "assistant_api_url",
                 "assistant_api_model", "assistant_profile", "assistant_auto"))
             if assistant_changed:  # включили, выключили или поменяли подсказки посреди звонка — перезапускаем
-                self._stop_assistant()
-                if settings.assistant_enabled:
-                    self._start_assistant()
-        save_settings(settings)
+                with self._assistant_lock:
+                    self._stop_assistant()
+                    if settings.assistant_enabled and self.session is not None:
+                        self._start_assistant()
+        saved = save_settings(settings)
         self.apply_hotkey()
-        problems = []
+        if settings.check_updates and not before.check_updates:  # включили проверку: первая — вскоре, не после перезапуска
+            self._schedule_update_check(AUTO_CHECK_DELAY_S)
+        problems = [] if saved else ["Настройки работают, но не сохранились на диск: после перезапуска вернутся прежние. "
+                                     "Проверьте свободное место"]
         if autostart_on is not None:
             try:
                 if autostart_on != autostart.is_enabled():
@@ -877,7 +935,7 @@ class Controller:
             set_dictation(None)
             self.listener.on_status(f"Диктовка не включена: {exc}")
             return
-        if self.settings.hotkey_enabled and self.settings.hotkey == chord_to_string(chord):
+        if self.settings.hotkey_enabled and _same_chord(self.settings.hotkey, chord):
             set_dictation(None)
             self.listener.on_status("Диктовка не включена: у неё та же комбинация, что у записи. Задайте другую в настройках")
             return

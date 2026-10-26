@@ -338,6 +338,8 @@ class Backend(QObject):
         self._startup_notices = []
 
     def shutdown(self) -> None:
+        self._summary_cancel.set()  # итоги и загрузки моделей прерываются, а не держат программу
+        self._llm_cancel.set()
         self.controller.shutdown()
 
     # ---------- свойства ----------
@@ -1147,7 +1149,8 @@ class Backend(QObject):
     def setOption(self, name: str, value: object) -> None:  # noqa: N802
         """Быстрые переключатели в главном окне: микрофон, звук компьютера, эхо, голоса."""
         settings = map_to_settings(self.controller.settings, {name: value})
-        self.controller.update_settings(settings)
+        for problem in self.controller.update_settings(settings):
+            self.toast.emit(problem, "error")
         self.settingsChanged.emit()
 
     @Slot(str)

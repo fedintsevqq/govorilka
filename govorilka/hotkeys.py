@@ -417,6 +417,14 @@ class HotkeyWatcher:
 
     def pause(self) -> None:
         self._paused.set()
+        self._cancel_dictation()  # пока опрос стоит, отпускания клавиш не увидим: идущую диктовку отменяем сразу
+
+    def _cancel_dictation(self) -> None:
+        """Диктовку, которая шла, отменяем: иначе микрофон писал бы до предела в 2 минуты, а потом вставил текст
+        туда, где окажется курсор."""
+        if self._dictating:
+            self._dictating = False
+            self._call(lambda: self._on_dictate_stop(True))
 
     def resume(self) -> None:
         with self._lock:  # начинаем с чистого листа: клавиши, зажатые во время паузы, не считаются нажатием
@@ -435,6 +443,8 @@ class HotkeyWatcher:
         """Комбинация диктовки; None выключает диктовку."""
         with self._lock:
             self._dictation = HotkeyDetector(chord, DICTATION_HOLD_S) if chord else None
+        if chord is None:
+            self._cancel_dictation()
 
     def wait_released(self, timeout: float = 1.5) -> None:
         """Ждёт, пока отпустят модификаторы: вставка Ctrl+V при зажатом Win открыла бы журнал буфера обмена.

@@ -68,7 +68,10 @@ def test_save_failure_is_reported_once_and_recovery_too(tmp_path):
 def test_strange_settings_files_do_not_break_startup(tmp_path, raw):
     path = tmp_path / "s.json"
     path.write_bytes(raw)
-    assert load_settings(path) == Settings()
+    from dataclasses import replace
+
+    # знакомство и автозапуск — как у прежнего пользователя: испорченный файл не делает установку «первой»
+    assert load_settings(path) == replace(Settings(), tour_done=True, autostart_initialized=True)
 
 
 def test_settings_with_bom_and_wrong_types(tmp_path):

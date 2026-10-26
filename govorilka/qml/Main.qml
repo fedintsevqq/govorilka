@@ -21,6 +21,7 @@ ApplicationWindow {
     readonly property bool live: phase === "recording" || phase === "paused"
     readonly property bool idle: phase === "idle"
     readonly property var opts: backend.settings
+    readonly property string markKeys: Qt.platform.os === "osx" ? "Ctrl+Shift+M" : "Ctrl+M"
 
     Binding { target: Theme; property: "mode"; value: window.opts.theme }
     Binding { target: Theme; property: "reduceMotion"; value: window.opts.reduce_motion }
@@ -80,6 +81,8 @@ ApplicationWindow {
             window.hide()
             backend.setTrayMode(true)   // Mac: без значка в Dock, пока окно спрятано
             backend.noteHiddenToTray()
+        } else if (backend.quitting) {
+            // выход уже идёт (Cmd+Q, «Выйти» в трее): просто даём окну закрыться, второй выход не начинаем
         } else {
             // трея нет (например, GNOME без индикаторов): окно некуда прятать, иначе программа осталась бы
             // невидимой, но живой. Закрываем по-настоящему и выходим.
@@ -397,7 +400,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: "Отметка"
                         iconName: "star"
-                        tip: "Отметить важный момент. В тексте и в файле появится звёздочка со временем, чтобы потом быстро найти это место. Горячая клавиша Ctrl+M"
+                        tip: "Отметить важный момент. В тексте и в файле появится звёздочка со временем, чтобы потом быстро найти это место. Горячая клавиша " + (Qt.platform.os === "osx" ? "⌘⇧M" : "Ctrl+M")
                         onClicked: backend.addMark()
                     }
                 }
@@ -722,5 +725,8 @@ ApplicationWindow {
     }
 
     Shortcut { sequences: ["Ctrl+,"]; onActivated: settingsWindow.open() }
-    Shortcut { sequences: ["Ctrl+M"]; onActivated: backend.addMark() }
+    // на Mac Ctrl здесь — это ⌘, а ⌘M там «Свернуть»: отметка — ⌘⇧M
+    Shortcut { sequences: [window.markKeys]; onActivated: backend.addMark() }
+    // Mac: ⌘W прячет окно в строку меню, как у других программ (запись и горячая клавиша продолжают работать)
+    Shortcut { enabled: Qt.platform.os === "osx"; sequences: ["Ctrl+W"]; onActivated: window.close() }
 }
