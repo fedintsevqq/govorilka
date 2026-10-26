@@ -756,9 +756,8 @@ ApplicationWindow {
         function onTourRequested() { window.showWindow(); tour.begin() }
     }
 
-    Shortcut { sequences: ["Ctrl+,"]; onActivated: settingsWindow.open() }
-    // на Mac Ctrl здесь — это ⌘, а ⌘M там «Свернуть»: отметка — ⌘⇧M
-    Shortcut { sequences: [window.markKeys]; onActivated: backend.addMark() }
-    // Mac: ⌘W прячет окно в строку меню, как у других программ (запись и горячая клавиша продолжают работать)
-    Shortcut { enabled: Qt.platform.os === "osx"; sequences: ["Ctrl+W"]; onActivated: window.close() }
+    // на Mac эти сочетания — в строке меню (⌘, настройки, ⌘⇧M отметка, ⌘W спрятать окно): то же сочетание здесь
+    // сделало бы его неоднозначным, и не сработало бы ни одно
+    Shortcut { enabled: Qt.platform.os !== "osx"; sequences: ["Ctrl+,"]; onActivated: settingsWindow.open() }
+    Shortcut { enabled: Qt.platform.os !== "osx"; sequences: [window.markKeys]; onActivated: backend.addMark() }
 }

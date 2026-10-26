@@ -252,12 +252,31 @@ def run(background: bool = False, updated: bool = False, live_check: bool = Fals
         # Cmd+Q и «Завершить» в Dock приходят как событие выхода: пока окно «закрывается в трей», оно бы его отменило
         app.on_quit = backend.begin_quit
 
-        # щелчок по значку в Dock, когда окно спрятано, — показать окно
+        # щелчок по значку в Dock, когда окно спрятано, — показать окно. Только если не открыто другое окно
+        # Говорилки (настройки): иначе главное выскакивало бы при любом переключении на программу
         def on_state(state: Qt.ApplicationState) -> None:
-            if state == Qt.ApplicationState.ApplicationActive and not root.isVisible():
+            if state != Qt.ApplicationState.ApplicationActive or root.isVisible():
+                return
+            others = [w for w in app.topLevelWindows() if w is not root and w.isVisible()
+                      and w.type() not in (Qt.WindowType.Popup, Qt.WindowType.ToolTip, Qt.WindowType.Tool)]
+            if not others:
                 backend.windowRequested.emit()
 
         app.applicationStateChanged.connect(on_state)
+
+        from govorilka.qt import mac_menu
+
+        # строка меню по-русски: без неё было одно «Quit Govorilka»; держим ссылку, иначе меню соберёт сборщик мусора
+        app._menu_bar = mac_menu.build(  # type: ignore[attr-defined]
+            show_window=backend.windowRequested.emit,
+            hide_window=root.close,
+            settings=backend.settingsRequested.emit,
+            toggle_recording=backend.toggleRecording,
+            add_mark=backend.addMark,
+            features=lambda: (backend.windowRequested.emit(), backend.showFeatures("all")),
+            tour=lambda: (backend.windowRequested.emit(), backend.showTour()),
+            quit_app=backend.quit,
+        )
 
     backend.start()
     if updated:  # запущены установщиком обновления: новая версия поднялась, прежнюю копию можно удалить

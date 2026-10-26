@@ -1242,3 +1242,19 @@ def test_mac_access_rows_carry_status_as_text(backend, monkeypatch):
     assert rows["input"]["state"] == "unknown"
     assert rows["accessibility"]["state"] == "unknown"
     assert _nones(list(rows.values())) == []
+
+
+def test_mac_menu_bar_is_in_russian_and_every_item_works(qapp):
+    from govorilka.qt import mac_menu
+
+    called = []
+    names = ("show_window", "hide_window", "settings", "toggle_recording", "add_mark", "features", "tour", "quit_app")
+    bar = mac_menu.build(**{name: (lambda n=name: called.append(n)) for name in names})
+    menus = [action.menu() for action in bar.actions()]
+    assert [m.title() for m in menus] == ["Говорилка", "Запись", "Окно", "Справка"]
+    for menu in menus:
+        for action in menu.actions():
+            action.trigger()
+    assert sorted(called) == sorted(names)  # у каждого пункта своё действие
+    shortcuts = [a.shortcut().toString() for m in menus for a in m.actions() if not a.shortcut().isEmpty()]
+    assert len(shortcuts) == len(set(shortcuts))  # одно сочетание — один пункт
