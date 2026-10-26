@@ -58,7 +58,7 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 # Транскрипты по умолчанию лежат в Загрузках, в своей папке, чтобы не мешаться с остальными файлами
 DEFAULT_TRANSCRIPTS_DIR = downloads_dir() / "Govorilka"
 OLD_DEFAULT_TRANSCRIPTS_DIRS = (Path.home() / "Documents" / "Govorilka", APP_DIR / "transcripts")  # до версии 0.2
-SETTINGS_VERSION = 2
+SETTINGS_VERSION = 3  # 3: плашка «● Запись» по умолчанию выключена
 PACKAGE_DIR = RESOURCE_DIR / "govorilka" if FROZEN else Path(__file__).resolve().parent
 QML_DIR = PACKAGE_DIR / "qml"  # окна интерфейса
 ASSETS_DIR = PACKAGE_DIR / "assets"  # иконки
@@ -113,7 +113,7 @@ class Settings:
     split_speakers: bool = True  # различать собеседников по голосу: «Собеседник 1», «Собеседник 2»
     hotkey_enabled: bool = True  # старт и стоп записи по комбинации клавиш, когда окно свёрнуто
     hotkey: str = DEFAULT_HOTKEY  # «ctrl+shift», «alt+cmd», «ctrl+alt+r»
-    show_indicator: bool = True  # маленькая плашка «● Запись» поверх окон
+    show_indicator: bool = False  # маленькая плашка «● Запись» поверх окон (видна только вам, не в демонстрации)
     hotkey_action: str = "menu"  # menu — круговое меню у курсора, record — сразу старт/стоп записи
     dictation_enabled: bool = True  # диктовка в любое поле: зажал комбинацию, сказал, отпустил — текст у курсора
     dictation_hotkey: str = DEFAULT_DICTATION_HOTKEY
@@ -178,6 +178,8 @@ def load_settings(path: Path = SETTINGS_FILE) -> Settings:
     if not isinstance(data, dict):
         return _recover(path, "в файле не объект настроек")
     defaults = Settings()
+    if data.get("settings_version", 1) < 3:
+        data.pop("show_indicator", None)  # плашка записи стала выключенной по умолчанию: прежнее «включено» не выбирали
     if _same_path(data.get("transcripts_dir"), OLD_DEFAULT_TRANSCRIPTS_DIRS) and data.get("settings_version", 1) < 2:
         data.pop("transcripts_dir")  # папку никто не выбирал, это был прежний вариант по умолчанию: берём «Загрузки»
     # берём только известные поля нужного типа: строка вместо флага не должна доезжать до окна

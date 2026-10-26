@@ -130,6 +130,9 @@ def main(out: Path) -> None:
     steps.append(lambda: invoke("hintsPopup", "open"))
     steps.append(lambda: shoot(backend, root, out / "1-hints.png"))
     steps.append(lambda: invoke("hintsPopup", "close"))
+    steps.append(lambda: invoke("aiMenu", "open"))
+    steps.append(lambda: shoot(backend, root, out / "1-ai-menu.png"))
+    steps.append(lambda: invoke("aiMenu", "close"))
     steps.append(lambda: (populate(True), None)[1])
     steps.append(lambda: shoot(backend, root, out / "2-recording.png"))
     def select_and_menu() -> None:

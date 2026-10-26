@@ -19,7 +19,8 @@ Window {
     y: Screen.virtualY + Screen.desktopAvailableHeight - height - 48
     title: "Говорилка — диктовка"
     objectName: "dictationPill"
-    onVisibleChanged: if (visible) backend.prepareOverlay(pill)   // macOS: видна и над полноэкранными окнами
+    // macOS: видна и над полноэкранными окнами; при демонстрации экрана её не видно
+    onVisibleChanged: if (visible) { backend.prepareOverlay(pill); backend.hideFromCapture(pill) }
     transientParent: null
 
     Rectangle {

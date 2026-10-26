@@ -105,8 +105,11 @@ Item {
         onCountChanged: if (follow) Qt.callLater(positionViewAtEnd)
 
         ScrollBar.vertical: ScrollBar {
+            id: feedBar
             policy: ScrollBar.AsNeeded
-            contentItem: Rectangle { implicitWidth: 4; radius: 2; color: Theme.textTertiary; opacity: 0.5 }
+            // полоса — только когда есть что прокручивать: на пустой ленте серой полосы во всю высоту нет
+            visible: list.contentHeight > list.height
+            contentItem: Rectangle { implicitWidth: 4; radius: 2; color: Theme.textTertiary; opacity: feedBar.active ? 0.6 : 0.3 }
         }
 
         delegate: Loader {

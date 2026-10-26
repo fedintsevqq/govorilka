@@ -1339,6 +1339,14 @@ class Backend(QObject):
 
     @Slot(QObject)
     @safe_slot
+    def hideFromCapture(self, window: QObject) -> None:  # noqa: N802
+        """Плашки записи и диктовки видите только вы: в демонстрации экрана и записи экрана их нет."""
+        # только на настоящей платформе: в тестах (offscreen) winId() — не настоящее окно системы
+        if QGuiApplication.platformName() in ("windows", "cocoa") and isinstance(window, QWindow):
+            capture_guard.protect(int(window.winId()), True)
+
+    @Slot(QObject)
+    @safe_slot
     def prepareOverlay(self, window: QObject) -> None:  # noqa: N802
         """Круговое меню и плашка записи должны появляться над полноэкранными приложениями (macOS)."""
         # только на настоящей платформе macOS: в тестах (offscreen) winId() — не вид NSView, и обращение к нему упадёт

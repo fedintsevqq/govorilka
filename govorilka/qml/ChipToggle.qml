@@ -6,7 +6,10 @@ AbstractButton {
     id: control
     property string tip: ""   // подсказка при наведении
     property string iconName: "mic"
-    checkable: true
+    // вкладка или выбор одного из двух: повторное нажатие не снимает выбор (checked задаёт тот, кто знает выбор)
+    property bool exclusive: false
+    checkable: !exclusive
+    opacity: enabled ? 1 : 0.45   // недоступная чипса видна сразу
     implicitHeight: 32
     implicitWidth: row.implicitWidth + 24
     focusPolicy: Qt.TabFocus

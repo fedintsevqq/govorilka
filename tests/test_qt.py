@@ -336,6 +336,23 @@ def test_qml_windows_load_without_warnings(backend, qapp):
     assert root.property("title") == "Говорилка"
 
 
+@pytest.mark.parametrize("size,spare", [((1120, 740), 24), ((900, 700), 0)])
+def test_recording_panel_fits_the_window_at_first_launch(backend, qapp, size, spare):
+    # всё влезает при первом запуске: пульт записи без прокрутки и без обрезанных кнопок, и в окне по умолчанию,
+    # и в самом маленьком. В окне по умолчанию ещё и запас в 24 точки — на чуть более широкие шрифты Mac;\n    # не хватит места — пульт прокручивается, а не обрезается
+    from govorilka.qt.app import create_engine
+
+    engine = create_engine(backend, strict=True)
+    root = engine.rootObjects()[0]
+    root.setWidth(size[0])
+    root.setHeight(size[1])
+    pump(qapp, lambda: False, timeout=0.3)  # даём раскладке посчитать размеры
+    deck = root.findChild(QObject, "deck")
+    column = root.findChild(QObject, "deckColumn")
+    assert deck is not None and column is not None
+    assert column.property("implicitHeight") + spare <= deck.property("height"), (column.property("implicitHeight"), deck.property("height"))
+
+
 def test_broken_qml_fails_loudly_instead_of_showing_an_empty_window(backend, qapp, monkeypatch, tmp_path):
     from govorilka.qt import app as qt_app
 

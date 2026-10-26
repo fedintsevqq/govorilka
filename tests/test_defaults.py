@@ -53,7 +53,18 @@ def test_folder_chosen_after_migration_is_kept(tmp_path):
 def test_hotkey_defaults_per_platform():
     expected = "alt+cmd" if sys.platform == "darwin" else "ctrl+shift"
     assert Settings().hotkey == expected and Settings().hotkey_enabled is True
-    assert config.SETTINGS_VERSION == 2
+    assert config.SETTINGS_VERSION == 3
+
+
+def test_recording_pill_is_off_by_default_and_old_on_is_reset_once(tmp_path):
+    import json
+
+    assert Settings().show_indicator is False
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"show_indicator": True, "settings_version": 2}), encoding="utf-8")
+    assert load_settings(path).show_indicator is False  # прежнее «включено» было значением по умолчанию
+    path.write_text(json.dumps({"show_indicator": True, "settings_version": 3}), encoding="utf-8")
+    assert load_settings(path).show_indicator is True  # включили сами — так и остаётся
 
 
 def test_short_reply_is_not_mistaken_for_speaker_echo():

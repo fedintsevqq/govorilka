@@ -18,7 +18,9 @@ Window {
     y: Screen.virtualY + 22
     title: "Говорилка — запись"
     objectName: "pill"
-    onVisibleChanged: if (visible) backend.prepareOverlay(pill)   // macOS: плашка видна и над полноэкранными окнами
+    // macOS: плашка видна и над полноэкранными окнами. Её видите только вы: при демонстрации экрана и в записи
+    // экрана её нет — собеседники не узнают из неё, что идёт запись
+    onVisibleChanged: if (visible) { backend.prepareOverlay(pill); backend.hideFromCapture(pill) }
     transientParent: null   // самостоятельное окно: иначе оно скрыто, пока скрыто главное
 
     Rectangle {

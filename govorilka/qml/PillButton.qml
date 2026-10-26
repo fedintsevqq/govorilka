@@ -88,6 +88,7 @@ AbstractButton {
             }
         }
     }
+    opacity: enabled ? 1 : 0.45   // недоступная кнопка не должна выглядеть как обычная
     scale: down ? 0.97 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
     // подсказка: своя, а если подпись не влезла — хотя бы полный текст кнопки

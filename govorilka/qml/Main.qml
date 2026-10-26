@@ -50,8 +50,8 @@ ApplicationWindow {
             if (window.live && hints.on && backend.assistantNote !== "")
                 return backend.assistantNote
             if (hints.api)
-                return backend.assistantKeySaved ? "Отвечает нейросеть через API: " + window.presetLabel(window.opts.assistant_api_preset)
-                                                 : "Через API, но ключ ещё не сохранён: нажмите «Настроить»"
+                return backend.assistantKeySaved ? "Отвечает нейросеть в интернете: " + window.presetLabel(window.opts.assistant_api_preset)
+                                                 : "Нейросеть в интернете: ключ ещё не сохранён — нажмите «Настроить»"
             if (hints.downloading)
                 return "Скачиваю " + hints.model.title + ": " + Math.round(backend.llmDownloadFraction * 100) + "%"
             if (hints.model.downloaded !== true)
@@ -227,7 +227,7 @@ ApplicationWindow {
                     x: Math.min(0, hintsButton.width - width)
                     width: 340
                     padding: 16
-                    background: Rectangle { radius: 18; color: Theme.glass; border.color: Theme.shellLine }
+                    background: Rectangle { radius: 18; color: Theme.coreRaised; border.color: Theme.shellLine }
                     contentItem: ColumnLayout {
                         spacing: 8
                         ToggleRow {
@@ -250,7 +250,7 @@ ApplicationWindow {
                                 visible: !hints.api && hints.model.downloaded !== true && !hints.downloading
                                 enabled: backend.llmDownloading === "" && hints.model.fit !== "no"
                                 text: "Скачать модель"
-                                iconName: "open"
+                                iconName: "save"
                                 implicitHeight: 32
                                 tip: "Скачать " + hints.model.title + " заранее, чтобы подсказки начались сразу"
                                 onClicked: backend.downloadLlm(hints.model.key)
@@ -321,7 +321,7 @@ ApplicationWindow {
                 font.features: { "tnum": 1 }
                 color: Theme.textSecondary
             }
-            PillButton { text: "Что нового"; implicitHeight: 32; visible: !backend.installing; tip: "Открыть страницу релиза на GitHub"; onClicked: backend.openReleasePage() }
+            PillButton { text: "Описание"; implicitHeight: 32; visible: !backend.installing; tip: "Открыть страницу релиза на GitHub"; onClicked: backend.openReleasePage() }
             PillButton {
                 text: backend.installing ? "Устанавливаю…" : backend.installError !== "" ? "Скачать вручную" : backend.canInstallUpdate ? "Установить" : "Скачать"
                 implicitHeight: 32
@@ -345,204 +345,236 @@ ApplicationWindow {
             Layout.preferredWidth: 332
             Layout.fillHeight: true
 
-            ColumnLayout {
+            // на невысоком окне (или с плашкой обновления, или с более широкими шрифтами Mac) пульт прокручивается,
+            // а не обрезается снизу; когда помещается, прокрутки нет
+            Flickable {
+                id: deck
+                objectName: "deck"
                 anchors.fill: parent
                 anchors.margins: 20
-                spacing: 0
+                contentWidth: width
+                contentHeight: deckColumn.height
+                interactive: deckColumn.implicitHeight > height + 1
+                boundsBehavior: Flickable.StopAtBounds
+                clip: interactive
+                ScrollBar.vertical: ScrollBar { policy: deck.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
 
-                RecordButton {
-                    id: recordButton
-                    diameter: window.height < 780 ? 80 : 100   // на невысоком окне пульт целиком, без обрезанного низа
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: 4
-                    phase: window.phase
-                    level: Math.max(backend.micLevel, backend.systemLevel)
-                    enabled: window.idle || window.live
-                    onClicked: backend.toggleRecording(titleField.text)
-                }
+                ColumnLayout {
+                    id: deckColumn
+                    objectName: "deckColumn"
+                    width: deck.width
+                    height: Math.max(deck.height, implicitHeight)
+                    spacing: 0
 
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: backend.elapsed
-                    font.pixelSize: 34
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: -1
-                    font.features: { "tnum": 1 }
-                    color: window.live ? Theme.text : Theme.textTertiary
-                    Behavior on color { ColorAnimation { duration: Theme.base } }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    Layout.topMargin: 2
-                    text: window.live ? (window.phase === "paused" ? "Пауза — звук не пишется" : "Говорите — текст появится справа")
-                                      : window.phase === "file" ? "Расшифровываю файл…" : "Нажмите, чтобы начать"
-                    font.pixelSize: 13
-                    color: Theme.textSecondary
-                }
-
-                RowLayout {   // пауза и отметка появляются вместе с записью
-                    Layout.fillWidth: true
-                    Layout.topMargin: 14
-                    spacing: 8
-                    // не выключаем, а приглушаем: подсказка при наведении объясняет, что это и когда работает
-                    opacity: window.live ? 1 : 0.45
-                    Behavior on opacity { NumberAnimation { duration: Theme.base } }
-                    PillButton {
-                        Layout.fillWidth: true
-                        text: window.phase === "paused" ? "Продолжить" : "Пауза"
-                        iconName: window.phase === "paused" ? "play" : "pause"
-                        tip: window.phase === "paused" ? "Продолжить запись с того же места" : "Поставить запись на паузу: звук не пишется, пока не продолжите"
-                        onClicked: backend.togglePause()
+                    RecordButton {
+                        id: recordButton
+                        diameter: window.height < 780 ? 80 : 100   // на невысоком окне пульт целиком, без обрезанного низа
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 4
+                        phase: window.phase
+                        level: Math.max(backend.micLevel, backend.systemLevel)
+                        enabled: window.idle || window.live
+                        onClicked: backend.toggleRecording(titleField.text)
                     }
-                    PillButton {
-                        Layout.fillWidth: true
-                        text: "Отметка"
-                        iconName: "star"
-                        tip: "Отметить важный момент. В тексте и в файле появится звёздочка со временем, чтобы потом быстро найти это место. Горячая клавиша " + (Qt.platform.os === "osx" ? "⌘⇧M" : "Ctrl+M")
-                        onClicked: backend.addMark()
-                    }
-                }
 
-                Rectangle { Layout.fillWidth: true; Layout.topMargin: 16; Layout.bottomMargin: 12; height: 1; color: Theme.hairline }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 18
-                    LevelBars { label: "Я"; iconName: "mic"; tint: Theme.me; level: backend.micLevel; Layout.fillWidth: true }
-                    LevelBars { label: "Собеседники"; iconName: "speaker"; tint: Theme.others[0]; level: backend.systemLevel; Layout.fillWidth: true }
-                }
-
-                Flow {
-                    Layout.fillWidth: true
-                    Layout.topMargin: 12
-                    spacing: 7
-                    enabled: window.idle
-                    opacity: enabled ? 1 : 0.55
-                    ChipToggle { text: "Микрофон"; iconName: "mic"; checked: window.opts.capture_mic; onToggled: backend.setOption("capture_mic", checked); tip: "Записывать ваш микрофон — реплики «Я»" }
-                    ChipToggle { text: "Звук компьютера"; iconName: "speaker"; checked: window.opts.capture_system; onToggled: backend.setOption("capture_system", checked); tip: "Записывать звук компьютера — голоса собеседников из Zoom, Телемоста, Teams" }
-                    ChipToggle { text: "Без эха"; iconName: "echo"; checked: window.opts.echo_filter; onToggled: backend.setOption("echo_filter", checked); tip: "Убирать из микрофона звук колонок, чтобы собеседники не попадали в «Я». В наушниках можно выключить" }
-                    ChipToggle { text: "Голоса"; iconName: "people"; checked: window.opts.split_speakers; onToggled: backend.setOption("split_speakers", checked); tip: "Различать собеседников по голосу: «Собеседник 1», «Собеседник 2»…" }
-                }
-
-                Item { Layout.fillHeight: true }
-
-                Text {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 8
-                    Layout.topMargin: 6
-                    text: backend.statusText
-                    wrapMode: Text.Wrap          // статус целиком, в две-три строки, а не обрезанный многоточием
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
-                    lineHeight: 1.15
-                    font.pixelSize: 12
-                    color: Theme.textTertiary
-                    HoverHandler { id: statusHover }
-                    ToolTip.visible: statusHover.hovered && truncated
-                    ToolTip.text: backend.statusText
-                    ToolTip.delay: 300
-                }
-
-                PillButton {   // обычная кнопка, а не «премиум»: нейросеть выбирается лентой ниже или в настройках
-                    Layout.fillWidth: true
-                    text: backend.aiTarget.id === "clipboard" ? "Скопировать для нейросети" : "Отправить в " + backend.aiTarget.name
-                    iconName: "sparkle"
-                    tip: backend.aiTarget.id === "claude_code"
-                         ? "Открыть Claude Code с этим транскриптом и вашим запросом: итоги, задачи, письмо. Другую нейросеть выберите ниже"
-                         : backend.aiTarget.web
-                           ? "Скопировать разговор с вашим запросом и открыть " + backend.aiTarget.name + " — короткий разговор сразу окажется в поле ввода. Другую нейросеть выберите ниже"
-                           : "Скопировать разговор с вашим запросом, чтобы вставить в любую нейросеть"
-                    onClicked: backend.sendToAi()
-                }
-
-                // лента нейросетей: выбор в одно касание, не заходя в настройки
-                ListView {
-                    id: aiStrip
-                    Layout.fillWidth: true
-                    Layout.topMargin: 8
-                    Layout.preferredHeight: 28
-                    orientation: ListView.Horizontal
-                    spacing: 6
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: backend.aiChoices
-                    Accessible.name: "Нейросеть"
-                    Component.onCompleted: positionViewAtIndex(Math.max(0, backend.aiChoices.findIndex(c => c.id === backend.aiTarget.id)), ListView.Contain)
-                    delegate: AbstractButton {
-                        id: chip
-                        required property var modelData
-                        readonly property bool chosen: backend.aiTarget.id === modelData.id
-                        height: 28
-                        width: chipText.implicitWidth + 22
-                        hoverEnabled: true
-                        focusPolicy: Qt.TabFocus
-                        Accessible.name: modelData.label
-                        Accessible.checkable: true
-                        Accessible.checked: chosen
-                        onClicked: backend.setOption("ai_target", modelData.id)
-                        background: Rectangle {
-                            radius: 14
-                            color: chip.chosen ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.18 : 0.12)
-                                               : (chip.hovered ? Theme.hover : "transparent")
-                            border.color: chip.chosen ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55)
-                                        : (chip.visualFocus ? Theme.accent : Theme.shellLine)
-                            Behavior on color { ColorAnimation { duration: Theme.fast } }
-                        }
-                        contentItem: Text {
-                            id: chipText
-                            text: chip.modelData.short
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font.pixelSize: 12
-                            font.weight: chip.chosen ? Font.DemiBold : Font.Normal
-                            color: chip.chosen ? Theme.text : Theme.textSecondary
-                        }
-                        Tip {
-                            shown: chip.hovered || chip.visualFocus
-                            text: chip.modelData.label + (chip.modelData.vpn ? ". Из России — только с VPN: без него Говорилка ничего не откроет" : "")
-                        }
-                    }
-                    // мягкие края: видно, что лента прокручивается
-                    Rectangle {
-                        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-                        width: 18; visible: !aiStrip.atXBeginning
-                        gradient: Gradient { orientation: Gradient.Horizontal
-                            GradientStop { position: 0; color: Theme.core }
-                            GradientStop { position: 1; color: Qt.rgba(Theme.core.r, Theme.core.g, Theme.core.b, 0) } }
-                    }
-                    Rectangle {
-                        anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
-                        width: 18; visible: !aiStrip.atXEnd
-                        gradient: Gradient { orientation: Gradient.Horizontal
-                            GradientStop { position: 0; color: Qt.rgba(Theme.core.r, Theme.core.g, Theme.core.b, 0) }
-                            GradientStop { position: 1; color: Theme.core } }
-                    }
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: 10
-                    spacing: 5
-                    // на невысоком окне места нет: подсказку про клавиши даёт знакомство и пустая лента
-                    visible: window.opts.hotkey_enabled && window.height >= 760
-                    HoverHandler { id: keysHover }
-                    Tip {
-                        shown: keysHover.hovered
-                        text: window.opts.hotkey_action === "record"
-                              ? "Зажмите эти клавиши и подержите полсекунды — запись начнётся или остановится. Работает из любой программы"
-                              : "Зажмите эти клавиши и подержите полсекунды — у курсора откроется круговое меню. Работает из любой программы"
-                    }
-                    Repeater {
-                        model: String(window.opts.hotkeyLabel).split(" + ")
-                        KeyCap { required property string modelData; text: modelData }
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: backend.elapsed
+                        font.pixelSize: 34
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: -1
+                        font.features: { "tnum": 1 }
+                        color: window.live ? Theme.text : Theme.textTertiary
+                        Behavior on color { ColorAnimation { duration: Theme.base } }
                     }
                     Text {
-                        text: window.opts.hotkey_action === "record" ? "запись" : "меню"
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        Layout.topMargin: 2
+                        text: window.live ? (window.phase === "paused" ? "Пауза — звук не пишется" : "Говорите — текст появится справа")
+                                          : window.phase === "file" ? "Расшифровываю файл…" : "Нажмите, чтобы начать"
+                        font.pixelSize: 13
+                        color: Theme.textSecondary
+                    }
+
+                    RowLayout {   // пауза и отметка появляются вместе с записью
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        spacing: 8
+                        // не выключаем, а приглушаем: подсказка при наведении объясняет, что это и когда работает
+                        opacity: window.live ? 1 : 0.45
+                        Behavior on opacity { NumberAnimation { duration: Theme.base } }
+                        PillButton {
+                            Layout.fillWidth: true
+                            text: window.phase === "paused" ? "Продолжить" : "Пауза"
+                            iconName: window.phase === "paused" ? "play" : "pause"
+                            tip: window.phase === "paused" ? "Продолжить запись с того же места" : "Поставить запись на паузу: звук не пишется, пока не продолжите"
+                            onClicked: backend.togglePause()
+                        }
+                        PillButton {
+                            Layout.fillWidth: true
+                            text: "Отметка"
+                            iconName: "star"
+                            tip: "Отметить важный момент. В тексте и в файле появится звёздочка со временем, чтобы потом быстро найти это место. Горячая клавиша " + (Qt.platform.os === "osx" ? "⌘⇧M" : "Ctrl+M")
+                            onClicked: backend.addMark()
+                        }
+                    }
+
+                    Rectangle { Layout.fillWidth: true; Layout.topMargin: 16; Layout.bottomMargin: 12; height: 1; color: Theme.hairline }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 18
+                        LevelBars { label: "Я"; iconName: "mic"; tint: Theme.me; level: backend.micLevel; Layout.fillWidth: true }
+                        LevelBars { label: "Собеседники"; iconName: "speaker"; tint: Theme.others[0]; level: backend.systemLevel; Layout.fillWidth: true }
+                    }
+
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 12
+                        spacing: 7
+                        enabled: window.idle
+                        opacity: enabled ? 1 : 0.55
+                        ChipToggle { text: "Микрофон"; iconName: "mic"; checked: window.opts.capture_mic; onToggled: backend.setOption("capture_mic", checked); tip: "Записывать ваш микрофон — реплики «Я»" }
+                        ChipToggle { text: "Звук компьютера"; iconName: "speaker"; checked: window.opts.capture_system; onToggled: backend.setOption("capture_system", checked); tip: "Записывать звук компьютера — голоса собеседников из Zoom, Телемоста, Teams" }
+                        ChipToggle { text: "Без эха"; iconName: "echo"; checked: window.opts.echo_filter; onToggled: backend.setOption("echo_filter", checked); tip: "Убирать из микрофона звук колонок, чтобы собеседники не попадали в «Я». В наушниках можно выключить" }
+                        ChipToggle { text: "Голоса"; iconName: "people"; checked: window.opts.split_speakers; onToggled: backend.setOption("split_speakers", checked); tip: "Различать собеседников по голосу: «Собеседник 1», «Собеседник 2»…" }
+                    }
+
+                    Item { Layout.fillHeight: true }
+
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: 8
+                        Layout.topMargin: 6
+                        text: backend.statusText
+                        wrapMode: Text.Wrap          // статус целиком, в две-три строки, а не обрезанный многоточием
+                        maximumLineCount: 3
+                        elide: Text.ElideRight
+                        lineHeight: 1.15
                         font.pixelSize: 12
                         color: Theme.textTertiary
-                        Layout.leftMargin: 3
+                        HoverHandler { id: statusHover }
+                        ToolTip.visible: statusHover.hovered && truncated
+                        ToolTip.text: backend.statusText
+                        ToolTip.delay: 300
+                    }
+
+                    // отправка нейросети и выбор, какой: все варианты в списке по стрелке, а не в ленте, где видно три
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        PillButton {   // обычная кнопка, а не «премиум»: нейросеть выбирается стрелкой рядом
+                            Layout.fillWidth: true
+                            text: backend.aiTarget.id === "clipboard" ? "Скопировать для нейросети" : "Отправить в " + backend.aiTarget.name
+                            tip: backend.aiTarget.id === "claude_code"
+                                 ? "Открыть Claude Code с этим разговором и вашим запросом: итоги, задачи, письмо. Другую нейросеть выберите стрелкой справа"
+                                 : backend.aiTarget.web
+                                   ? "Скопировать разговор с вашим запросом и открыть " + backend.aiTarget.name + " — короткий разговор сразу окажется в поле ввода. Другую нейросеть выберите стрелкой справа"
+                                   : "Скопировать разговор с вашим запросом, чтобы вставить в любую нейросеть. Другую выберите стрелкой справа"
+                            onClicked: backend.sendToAi()
+                        }
+                        AbstractButton {
+                            id: aiChooser
+                            objectName: "aiChooser"
+                            implicitWidth: 44
+                            implicitHeight: 44
+                            hoverEnabled: true
+                            focusPolicy: Qt.TabFocus
+                            Accessible.name: "Выбрать нейросеть"
+                            onClicked: aiMenu.opened ? aiMenu.close() : aiMenu.open()
+                            background: Rectangle {
+                                radius: height / 2
+                                color: aiChooser.down ? Theme.pressed : aiChooser.hovered ? Theme.hover : Theme.shell
+                                border.color: aiChooser.visualFocus ? Theme.accent : Theme.shellLine
+                            }
+                            contentItem: Item {
+                                Icon { anchors.centerIn: parent; name: "chevron"; size: 15; rotation: 90; color: Theme.textSecondary }
+                            }
+                            Tip { shown: (aiChooser.hovered || aiChooser.visualFocus) && !aiMenu.opened; text: "Куда отправить разговор: ChatGPT, Claude, Gemini, DeepSeek и другие" }
+
+                            Popup {
+                                id: aiMenu
+                                objectName: "aiMenu"
+                                y: -height - 8
+                                x: aiChooser.width - width
+                                width: 260
+                                padding: 6
+                                margins: 8
+                                background: Rectangle { radius: 16; color: Theme.coreRaised; border.color: Theme.shellLine }  // плотный: сквозь список не просвечивают кнопки
+                                contentItem: Column {
+                                    spacing: 2
+                                    Repeater {
+                                        model: backend.aiChoices
+                                        AbstractButton {
+                                            id: choice
+                                            required property var modelData
+                                            readonly property bool chosen: backend.aiTarget.id === modelData.id
+                                            width: 248
+                                            height: 34
+                                            hoverEnabled: true
+                                            focusPolicy: Qt.TabFocus
+                                            Accessible.name: modelData.label
+                                            onClicked: { backend.setOption("ai_target", modelData.id); aiMenu.close() }
+                                            Tip {
+                                                shown: choice.hovered || choice.visualFocus
+                                                text: choice.modelData.label + (choice.modelData.vpn ? ". Из России — только с VPN" : "")
+                                            }
+                                            background: Rectangle {
+                                                radius: 10
+                                                color: choice.chosen ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.18 : 0.12)
+                                                                     : choice.hovered || choice.visualFocus ? Theme.hover : "transparent"
+                                            }
+                                            contentItem: Item {
+                                                Text {
+                                                    anchors { left: parent.left; leftMargin: 10; right: mark.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
+                                                    elide: Text.ElideRight
+                                                    text: (choice.modelData.id === "clipboard" ? "Только скопировать" : choice.modelData.label.split(" — ")[0])
+                                                      + (choice.modelData.vpn ? " · с VPN" : "")
+                                                    font.pixelSize: 13
+                                                    font.weight: choice.chosen ? Font.DemiBold : Font.Normal
+                                                    color: Theme.text
+                                                }
+                                                Icon {
+                                                    id: mark
+                                                    visible: choice.chosen
+                                                    anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                                                    name: "check"
+                                                    size: 14
+                                                    color: Theme.accent
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 10
+                        spacing: 5
+                        // на невысоком окне места нет: подсказку про клавиши даёт знакомство и пустая лента
+                        visible: window.opts.hotkey_enabled && window.height >= 760
+                        HoverHandler { id: keysHover }
+                        Tip {
+                            shown: keysHover.hovered
+                            text: window.opts.hotkey_action === "record"
+                                  ? "Зажмите эти клавиши и подержите полсекунды — запись начнётся или остановится. Работает из любой программы"
+                                  : "Зажмите эти клавиши и подержите полсекунды — у курсора откроется круговое меню. Работает из любой программы"
+                        }
+                        Repeater {
+                            model: String(window.opts.hotkeyLabel).split(" + ")
+                            KeyCap { required property string modelData; text: modelData }
+                        }
+                        Text {
+                            text: window.opts.hotkey_action === "record" ? "запись" : "меню"
+                            font.pixelSize: 12
+                            color: Theme.textTertiary
+                            Layout.leftMargin: 3
+                        }
                     }
                 }
             }
@@ -569,8 +601,8 @@ ApplicationWindow {
                         spacing: 1
                         Row {   // вкладки: сам разговор и его итоги
                             spacing: 6
-                            ChipToggle { text: "Разговор"; iconName: "people"; checked: window.panel === "feed"; onClicked: window.panel = "feed"; tip: "Реплики созвона" }
-                            ChipToggle { text: "Итоги"; iconName: "sparkle"; checked: window.panel === "summary"; onClicked: window.panel = "summary"; tip: "Кратко, решения, задачи и открытые вопросы: считает модель на этом компьютере" }
+                            ChipToggle { exclusive: true; text: "Разговор"; iconName: "people"; checked: window.panel === "feed"; onClicked: window.panel = "feed"; tip: "Реплики созвона" }
+                            ChipToggle { exclusive: true; text: "Итоги"; iconName: "sparkle"; checked: window.panel === "summary"; onClicked: window.panel = "summary"; tip: "Кратко, решения, задачи и открытые вопросы: считает модель на этом компьютере" }
                         }
                         Text {
                             Layout.fillWidth: true

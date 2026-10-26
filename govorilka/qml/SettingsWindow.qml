@@ -9,7 +9,9 @@ Window {
     id: win
     objectName: "settings"
     width: 640
-    height: 780
+    // на 13-дюймовом MacBook (около 800 точек по высоте, минус строка меню и Dock) окно в 780 уходило бы под Dock
+    // вместе с кнопкой «Сохранить»
+    height: Math.max(minimumHeight, Math.min(780, Screen.desktopAvailableHeight - 90))
     minimumWidth: 560
     minimumHeight: 520
     title: "Настройки — Говорилка"
@@ -163,8 +165,11 @@ Window {
             width: combo.width
             implicitHeight: Math.min(contentItem.implicitHeight + 12, 280)
             padding: 6
+            // список не уходит за край окна и под нижнюю панель с кнопками: если места снизу нет, он поднимается
+            topMargin: 8
+            bottomMargin: 84
             contentItem: ListView { clip: true; implicitHeight: contentHeight; model: combo.popup.visible ? combo.delegateModel : null; currentIndex: combo.highlightedIndex }
-            background: Rectangle { radius: 16; color: Theme.glass; border.color: Theme.shellLine }
+            background: Rectangle { radius: 16; color: Theme.coreRaised; border.color: Theme.shellLine }
         }
     }
     component Section: Bezel {
@@ -428,8 +433,8 @@ Window {
                     Flow {
                         Layout.fillWidth: true
                         spacing: 7
-                        ChipToggle { text: "С Hugging Face"; iconName: "open"; checked: customPanel.kind === "hf"; onClicked: customPanel.kind = "hf"; tip: "Скачать модель по адресу вида автор/репозиторий. В репозитории должен быть config.json с model_type" }
-                        ChipToggle { text: "Папка на компьютере"; iconName: "folder"; checked: customPanel.kind === "dir"; onClicked: customPanel.kind = "dir"; tip: "Использовать готовые файлы модели из папки: ничего не копируется и не скачивается" }
+                        ChipToggle { exclusive: true; text: "С Hugging Face"; iconName: "open"; checked: customPanel.kind === "hf"; onClicked: customPanel.kind = "hf"; tip: "Скачать модель по адресу вида автор/репозиторий. В репозитории должен быть config.json с model_type" }
+                        ChipToggle { exclusive: true; text: "Папка на компьютере"; iconName: "folder"; checked: customPanel.kind === "dir"; onClicked: customPanel.kind = "dir"; tip: "Использовать готовые файлы модели из папки: ничего не копируется и не скачивается" }
                     }
                     FieldBox {
                         id: customField
@@ -529,7 +534,7 @@ Window {
             Section {
                 heading: "Запуск и вид"
                 ToggleRow { title: "Запускать при входе в систему"; hint: "Говорилка стартует свёрнутой в трей и ждёт горячую клавишу"; checked: win.autostart; onToggled: (v) => win.autostart = v }
-                ToggleRow { title: "Плашка «● Запись» поверх окон"; hint: "Видно, что запись идёт, даже когда окно скрыто"; checked: win.draft.show_indicator === true; onToggled: (v) => win.setValue("show_indicator", v) }
+                ToggleRow { title: "Плашка «● Запись» поверх окон"; hint: "Видно, что запись идёт, даже когда окно скрыто. Её видите только вы: в демонстрации экрана её нет"; checked: win.draft.show_indicator === true; onToggled: (v) => win.setValue("show_indicator", v) }
                 ToggleRow { title: "Меньше движения"; hint: "Вместо подъёма и пружин — короткое растворение"; checked: win.draft.reduce_motion === true; onToggled: (v) => win.setValue("reduce_motion", v) }
                 Label { text: "Тема" }
                 ComboField {
@@ -564,8 +569,8 @@ Window {
                     Flow {
                         Layout.fillWidth: true
                         spacing: 7
-                        ChipToggle { text: "Модель на компьютере"; iconName: "power"; checked: !assistantSection.api; onClicked: win.setValue("assistant_source", "local"); tip: "Разговор не покидает компьютер. Нужна память и время на ответ" }
-                        ChipToggle { text: "Через API"; iconName: "open"; checked: assistantSection.api; onClicked: win.setValue("assistant_source", "api"); tip: "OpenAI, DeepSeek, OpenRouter, Claude или свой адрес по вашему ключу: быстрее и умнее" }
+                        ChipToggle { exclusive: true; text: "Модель на компьютере"; iconName: "power"; checked: !assistantSection.api; onClicked: win.setValue("assistant_source", "local"); tip: "Разговор не покидает компьютер. Нужна память и время на ответ" }
+                        ChipToggle { exclusive: true; text: "Через нейросеть в интернете"; iconName: "sparkle"; checked: assistantSection.api; onClicked: win.setValue("assistant_source", "api"); tip: "OpenAI, DeepSeek, OpenRouter, Claude или свой адрес по вашему ключу: быстрее и умнее" }
                     }
                     Text {
                         visible: !assistantSection.api
@@ -770,12 +775,12 @@ Window {
                     PillButton {
                         text: backend.installing ? "Устанавливаю…" : backend.canInstallUpdate ? "Установить" : "Скачать"
                         variant: "primary"
-                        iconName: "open"
+                        iconName: "save"
                         enabled: !backend.installing
                         tip: backend.canInstallUpdate ? "Скачать, проверить и установить новую версию; Говорилка перезапустится сама" : "Скачать новую версию"
                         onClicked: backend.installUpdate()
                     }
-                    PillButton { text: "Что нового"; tip: "Страница релиза на GitHub"; onClicked: backend.openReleasePage() }
+                    PillButton { text: "Описание на GitHub"; tip: "Что изменилось в новой версии: страница релиза на GitHub"; onClicked: backend.openReleasePage() }
                     PillButton { text: "Пропустить эту версию"; tip: "Больше не напоминать об этой версии"; onClicked: backend.skipUpdate() }
                 }
                 ToggleRow {

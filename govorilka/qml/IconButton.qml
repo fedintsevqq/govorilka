@@ -29,6 +29,7 @@ AbstractButton {
             color: control.hovered ? Theme.text : control.iconColor
         }
     }
+    opacity: enabled ? 1 : 0.4   // недоступная кнопка видна сразу
     scale: down ? 0.94 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.easeOut } }
 
