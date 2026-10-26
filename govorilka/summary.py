@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -190,6 +191,17 @@ def is_downloaded(model: LlmModel) -> bool:
     return model.path.is_file() and model.path.stat().st_size > 0
 
 
+_LOCKS: dict[Path, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    """Один замок на файл: модель качают кнопка «Скачать», «Сделать итоги» и подсказки в звонке. Без замка два потока
+    дописывали в один .part вперемешку, и файл не сходился по SHA-256."""
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(path.resolve(), threading.Lock())
+
+
 RETRIES = 20  # обрывы связи на многочасовой загрузке — обычное дело: продолжаем с того же места
 
 
@@ -204,7 +216,11 @@ def download_resumable(url: str, target: Path, size: int, label: str, allowed: t
         if cancelled():
             raise SummaryError("Отменено")
         have = part.stat().st_size if part.exists() else 0
-        if size and have >= size:
+        if size and have > size:  # больше, чем весит файл: испорчен (так бывало при одновременной загрузке) — заново
+            log.warning("Недокачанный %s больше ожидаемого (%d > %d): качаю заново", label, have, size)
+            part.unlink()
+            continue
+        if size and have == size:
             break
         request = urllib.request.Request(url, headers={"User-Agent": "Govorilka", **({"Range": f"bytes={have}-"} if have else {})})
         try:
@@ -257,11 +273,22 @@ def _pause(failures: int, cancelled: Callable[[], bool]) -> None:
 def _fetch(url: str, target: Path, size: int, sha256: str, label: str, allowed: tuple[str, ...],
            on_status: Callable[[str], None], cancelled: Callable[[], bool]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    download_resumable(url, target, size, label, allowed, on_status, cancelled)
-    on_status(f"Проверяю {label}…")
-    if installer.sha256_of(target).lower() != sha256.lower():
-        target.unlink(missing_ok=True)
-        raise SummaryError(f"Контрольная сумма не совпала: {label} скачался с ошибкой или подменён. Попробуйте ещё раз")
+    lock = _lock_for(target)
+    if not lock.acquire(blocking=False):
+        on_status(f"{label[:1].upper()}{label[1:]} уже качается, жду…")
+        while not lock.acquire(timeout=0.5):
+            if cancelled():
+                raise SummaryError("Отменено")
+    try:
+        if target.is_file() and installer.sha256_of(target).lower() == sha256.lower():
+            return  # пока ждали, файл докачал другой поток
+        download_resumable(url, target, size, label, allowed, on_status, cancelled)
+        on_status(f"Проверяю {label}…")
+        if installer.sha256_of(target).lower() != sha256.lower():
+            target.unlink(missing_ok=True)
+            raise SummaryError(f"Контрольная сумма не совпала: {label} скачался с ошибкой. Нажмите ещё раз — скачается заново")
+    finally:
+        lock.release()
 
 
 def ensure_engine(on_status: Callable[[str], None], cancelled: Callable[[], bool] = lambda: False) -> Path:

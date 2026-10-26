@@ -431,19 +431,24 @@ class Controller:
         settings = self.settings
         server_box: list[summary.LlamaServer] = []
 
-        def connect() -> assistant.ChatEndpoint:
+        def connect(cancelled: Callable[[], bool]) -> assistant.ChatEndpoint:
             if settings.assistant_source == "api":
                 return self.assistant_endpoint()
             model = self.summary_model()
             verdict, note = summary.fit(model, summary.total_ram_gb() - 1.5)  # вместе с моделью распознавания
             if verdict == "no":
                 raise assistant.AssistantError(note + ". Выберите модель полегче в настройках или подключите API")
-            engine = summary.ensure_engine(lambda text: self.listener.on_assistant("status", text))
-            weights = summary.ensure_model(model, lambda text: self.listener.on_assistant("status", text))
-            self.listener.on_assistant("status", f"Загружаю {model.title}…")
+            def status(text: str) -> None:
+                if not cancelled():  # выключенные подсказки не перебивают сообщения новых
+                    self.listener.on_assistant("status", text)
+
+            # подсказки выключили или перезапустили — загрузка прерывается, а не идёт параллельно с новой
+            engine = summary.ensure_engine(status, cancelled)
+            weights = summary.ensure_model(model, status, cancelled)
+            status(f"Загружаю {model.title}…")
             server = summary.LlamaServer(engine, weights)
             server_box.append(server)
-            server.wait_ready()
+            server.wait_ready(cancelled=cancelled)
             return assistant.ChatEndpoint(server.url + "/v1", "")
 
         def stop_server() -> None:

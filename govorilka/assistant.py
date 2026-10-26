@@ -188,9 +188,9 @@ Event = Callable[[str, str], None]  # (вид, текст): ready / question / a
 class CallAssistant:
     """Живёт, пока идёт запись. Принимает готовые фразы, на вопросы собеседника отвечает по одному, свежий важнее."""
 
-    def __init__(self, connect: Callable[[], ChatEndpoint], profile: str, on_event: Event,
+    def __init__(self, connect: Callable[[Callable[[], bool]], ChatEndpoint], profile: str, on_event: Event,
                  auto: bool = True, stop_server: Callable[[], None] = lambda: None) -> None:
-        self._connect = connect
+        self._connect = connect  # получает «остановлены ли подсказки»: долгую загрузку модели можно прервать
         self._profile = profile
         self._on_event = on_event
         self._auto = auto
@@ -241,7 +241,7 @@ class CallAssistant:
     def _run(self) -> None:
         try:
             self._on_event("status", "Подключаю нейросеть…")
-            self._endpoint = self._connect()
+            self._endpoint = self._connect(self._closed.is_set)
             if self._closed.is_set():
                 return
             self._on_event("ready", "")
@@ -256,6 +256,8 @@ class CallAssistant:
                     question = newer
                 self._answer(question)
         except Exception as exc:  # noqa: BLE001 — модель не запустилась, нет ключа: человек должен узнать
+            if self._closed.is_set():  # подсказки выключили, пока модель готовилась: это не ошибка
+                return
             log.exception("Подсказки не запустились")
             self._on_event("error", str(exc))
         finally:

@@ -150,6 +150,36 @@ def test_cancel_stops_the_download_even_while_it_waits_to_retry(tmp_path, monkey
         summary.download_resumable("http://127.0.0.1:9/m.gguf", tmp_path / "m.gguf", 10, "модель", (), lambda _s: None, cancelled)
 
 
+def test_two_callers_download_one_file_once_and_it_is_not_mixed(tmp_path, honest_server):
+    # подсказки в звонке перезапускались и качали ту же модель вторым потоком: файл получался вперемешку
+    url, data, state = honest_server
+    target = tmp_path / "m.gguf"
+    digest = hashlib.sha256(data).hexdigest()
+    errors = []
+
+    def fetch():
+        try:
+            summary._fetch(url, target, len(data), digest, "модель", (), lambda _s: None, lambda: False)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=fetch) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert errors == [] and target.read_bytes() == data
+    assert len(state["requests"]) == 1  # качал один поток, остальные дождались готового файла
+
+
+def test_partial_file_bigger_than_the_model_is_downloaded_again(tmp_path, honest_server):
+    url, data, _ = honest_server
+    target = tmp_path / "m.gguf"
+    (tmp_path / "m.gguf.part").write_bytes(b"x" * (len(data) + 500))  # остаток прежней испорченной загрузки
+    summary._fetch(url, target, len(data), hashlib.sha256(data).hexdigest(), "модель", (), lambda _s: None, lambda: False)
+    assert target.read_bytes() == data
+
+
 def test_catalog_sizes_are_exact_bytes():
     for entry in summary.CATALOG:
         assert entry.size > 500 * 1024 * 1024 and entry.size % (1024 * 1024) != 0  # байты, а не округлённые мегабайты

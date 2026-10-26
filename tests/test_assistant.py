@@ -61,7 +61,7 @@ def test_api_key_is_never_sent_over_plain_http():
 def test_assistant_answers_questions_from_the_other_side_only(sse_server):
     url, _ = sse_server
     events = []
-    helper = assistant.CallAssistant(lambda: assistant.ChatEndpoint(url, "m"), "Я тимлид",
+    helper = assistant.CallAssistant(lambda _cancelled: assistant.ChatEndpoint(url, "m"), "Я тимлид",
                                      lambda kind, text: events.append((kind, text)))
     helper.start()
     helper.feed("Я", "Как дела у команды?", from_other=False)  # мой вопрос — не подсказываем
