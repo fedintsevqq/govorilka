@@ -205,6 +205,7 @@ Window {
     function openAt(section) {   // открыть настройки сразу на нужном разделе
         open()
         if (section === "summary") Qt.callLater(() => { scroll.contentItem.contentY = Math.max(0, summarySection.y - 12) })
+        if (section === "assistant") Qt.callLater(() => { scroll.contentItem.contentY = Math.max(0, assistantSection.y - 12) })
     }
     function showAssistant() { scroll.contentItem.contentY = Math.max(0, assistantSection.y - 12) }   // для снимков
     function showUpdates() { scroll.contentItem.contentY = Math.max(0, updatesSection.y - 12) }   // для снимков интерфейса
@@ -551,7 +552,7 @@ Window {
                 readonly property bool api: win.draft.assistant_source === "api"
                 ToggleRow {
                     title: "Подсказывать ответы на вопросы собеседника"
-                    hint: "Во время записи нейросеть слышит вопросы собеседника и сразу предлагает ответ в отдельном окне поверх всех. Включить и выключить можно и кнопкой «Подсказки» в пульте записи."
+                    hint: "Во время записи нейросеть слышит вопросы собеседника и сразу предлагает ответ в отдельном окне поверх всех. Включить и выключить можно и кнопкой «Подсказки» в шапке главного окна."
                     checked: win.draft.assistant_enabled === true
                     onToggled: (v) => win.setValue("assistant_enabled", v)
                 }

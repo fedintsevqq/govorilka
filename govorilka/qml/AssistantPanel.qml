@@ -74,7 +74,7 @@ Window {
                         color: backend.assistantProtection === "hidden" ? Theme.success : Theme.pause
                     }
                 }
-                IconButton { iconName: "close"; size: 28; tip: "Спрятать подсказки до конца записи (вернуть — в пульте записи)"; onClicked: backend.setAssistantHidden(true) }
+                IconButton { iconName: "close"; size: 28; tip: "Спрятать подсказки до конца записи (вернуть — кнопка «Подсказки» в шапке окна)"; onClicked: backend.setAssistantHidden(true) }
                 DragHandler { target: null; onActiveChanged: if (active) panel.startSystemMove() }
             }
 

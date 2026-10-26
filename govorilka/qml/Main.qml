@@ -38,6 +38,30 @@ ApplicationWindow {
     // show() свёрнутое окно не разворачивает — поэтому разворачиваем явно, в том же виде, в каком его свернули.
     property bool wasMaximized: false
     onVisibilityChanged: (mode) => { if (mode === Window.Maximized || mode === Window.Windowed) wasMaximized = mode === Window.Maximized }
+    QtObject {   // состояние подсказок в звонке для кнопки в шапке
+        id: hints
+        readonly property bool on: window.opts.assistant_enabled === true
+        readonly property bool api: window.opts.assistant_source === "api"
+        readonly property var model: backend.summaryModel
+        readonly property bool downloading: backend.llmDownloading === hints.model.key
+        readonly property bool ready: hints.api ? backend.assistantKeySaved : hints.model.downloaded === true
+        readonly property string statusLine: {
+            if (window.live && hints.on && backend.assistantNote !== "")
+                return backend.assistantNote
+            if (hints.api)
+                return backend.assistantKeySaved ? "Отвечает нейросеть через API: " + window.presetLabel(window.opts.assistant_api_preset)
+                                                 : "Через API, но ключ ещё не сохранён: нажмите «Настроить»"
+            if (hints.downloading)
+                return "Скачиваю " + hints.model.title + ": " + Math.round(backend.llmDownloadFraction * 100) + "%"
+            if (hints.model.downloaded !== true)
+                return "Отвечает " + hints.model.title + " на этом компьютере. Её нужно один раз скачать (" + (hints.model.sizeMb / 1024).toFixed(1).replace(".", ",") + " ГБ)"
+            return "Отвечает " + hints.model.title + " на этом компьютере, без интернета"
+        }
+    }
+    function presetLabel(id) {   // название провайдера API для блока подсказок
+        const preset = backend.apiPresets.find(p => p.id === id)
+        return preset ? preset.label : "свой адрес"
+    }
     function showWindow() {
         backend.setTrayMode(false)   // Mac: вернуть значок в Dock
         if (window.visibility === Window.Minimized || !window.visible)
@@ -161,6 +185,98 @@ ApplicationWindow {
                 }
             }
 
+            // подсказки в звонке — своя кнопка в шапке: включаются и во время записи, видно, готова ли модель
+            AbstractButton {
+                id: hintsButton
+                implicitHeight: 34
+                implicitWidth: hintsRow.implicitWidth + 24
+                hoverEnabled: true
+                focusPolicy: Qt.TabFocus
+                Accessible.name: "Подсказки в звонке"
+                onClicked: hintsPopup.opened ? hintsPopup.close() : hintsPopup.open()
+                background: Rectangle {
+                    radius: 17
+                    color: hints.on ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, Theme.dark ? 0.16 : 0.10)
+                                    : hintsButton.hovered ? Theme.hover : "transparent"
+                    border.color: hints.on ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.5) : Theme.shellLine
+                }
+                contentItem: Item {
+                    Row {
+                        id: hintsRow
+                        anchors.centerIn: parent
+                        spacing: 7
+                        Icon { name: "sparkle"; size: 15; color: hints.on ? Theme.accent : Theme.textSecondary; anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "Подсказки"; font.pixelSize: 13; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
+                        Rectangle {   // зелёная — готовы, оранжевая — включены, но модели или ключа ещё нет
+                            visible: hints.on
+                            width: 7; height: 7; radius: 3.5
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: backend.assistantPhase === "error" ? Theme.danger : hints.ready ? Theme.success : Theme.pause
+                        }
+                    }
+                }
+                Tip { shown: hintsButton.hovered && !hintsPopup.opened; text: "Подсказки в звонке: нейросеть отвечает на вопросы собеседника в окне, которого не видно при демонстрации экрана" }
+
+                Popup {
+                    id: hintsPopup
+                    objectName: "hintsPopup"
+                    y: hintsButton.height + 8
+                    x: Math.min(0, hintsButton.width - width)
+                    width: 340
+                    padding: 16
+                    background: Rectangle { radius: 18; color: Theme.glass; border.color: Theme.shellLine }
+                    contentItem: ColumnLayout {
+                        spacing: 8
+                        ToggleRow {
+                            title: "Подсказки в звонке"
+                            hint: "Собеседник задал вопрос — в отдельном окне появляется ответ. Окно не видно при демонстрации экрана"
+                            checked: hints.on
+                            onToggled: (v) => { backend.setOption("assistant_enabled", v); if (v) backend.setAssistantHidden(false) }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: hints.statusLine
+                            font.pixelSize: 12
+                            color: backend.assistantPhase === "error" ? Theme.danger : hints.ready ? Theme.textSecondary : Theme.pause
+                        }
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            PillButton {
+                                visible: !hints.api && hints.model.downloaded !== true && !hints.downloading
+                                enabled: backend.llmDownloading === "" && hints.model.fit !== "no"
+                                text: "Скачать модель"
+                                iconName: "open"
+                                implicitHeight: 32
+                                tip: "Скачать " + hints.model.title + " заранее, чтобы подсказки начались сразу"
+                                onClicked: backend.downloadLlm(hints.model.key)
+                            }
+                            PillButton {
+                                visible: hints.downloading
+                                text: "Отменить загрузку"
+                                implicitHeight: 32
+                                tip: "Скачанное останется: следующая загрузка продолжится с того же места"
+                                onClicked: backend.cancelLlmDownload()
+                            }
+                            PillButton {
+                                visible: window.live && hints.on && backend.assistantHidden
+                                text: "Показать окно"
+                                iconName: "window"
+                                implicitHeight: 32
+                                onClicked: backend.setAssistantHidden(false)
+                            }
+                            PillButton {
+                                text: "Настроить"
+                                iconName: "settings"
+                                implicitHeight: 32
+                                tip: "Модель на компьютере или API, что нейросети знать о вас"
+                                onClicked: { hintsPopup.close(); settingsWindow.openAt("assistant") }
+                            }
+                        }
+                    }
+                }
+            }
             IconButton { iconName: "open"; tip: "Расшифровать аудио или видео"; onClicked: openDialog.open(); enabled: window.idle }
             IconButton { iconName: "folder"; tip: "Папка с транскриптами"; onClicked: backend.openFolder() }
             IconButton { iconName: "settings"; tip: "Настройки"; onClicked: settingsWindow.open() }
@@ -305,13 +421,6 @@ ApplicationWindow {
                     ChipToggle { text: "Звук компьютера"; iconName: "speaker"; checked: window.opts.capture_system; onToggled: backend.setOption("capture_system", checked); tip: "Записывать звук компьютера — голоса собеседников из Zoom, Телемоста, Teams" }
                     ChipToggle { text: "Без эха"; iconName: "echo"; checked: window.opts.echo_filter; onToggled: backend.setOption("echo_filter", checked); tip: "Убирать из микрофона звук колонок, чтобы собеседники не попадали в «Я». В наушниках можно выключить" }
                     ChipToggle { text: "Голоса"; iconName: "people"; checked: window.opts.split_speakers; onToggled: backend.setOption("split_speakers", checked); tip: "Различать собеседников по голосу: «Собеседник 1», «Собеседник 2»…" }
-                    ChipToggle {
-                        text: "Подсказки"
-                        iconName: "sparkle"
-                        checked: window.opts.assistant_enabled === true
-                        onToggled: { backend.setOption("assistant_enabled", checked); if (checked) backend.setAssistantHidden(false) }
-                        tip: "Подсказки в звонке: нейросеть отвечает на вопросы собеседника в отдельном окне, которого не видно при демонстрации экрана"
-                    }
                 }
 
                 Item { Layout.fillHeight: true }
