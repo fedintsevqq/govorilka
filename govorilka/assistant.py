@@ -143,13 +143,19 @@ def stream_chat(
                     parts.append(delta)
                     on_delta("".join(parts))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300] if exc.fp else ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:300] if exc.fp else ""
+        except OSError:  # сервер оборвал соединение, не дослав пояснение: обойдёмся кодом ответа
+            detail = ""
         if exc.code in (401, 403):
             raise AssistantError("Ключ API не подошёл: проверьте его в настройках") from exc
         if exc.code == 404:
             raise AssistantError(f"Модель или адрес не найдены: {endpoint.model or endpoint.base_url}") from exc
         if exc.code == 429:
             raise AssistantError("Провайдер ограничил запросы или закончились деньги на счёте") from exc
+        if 300 <= exc.code < 400:
+            raise AssistantError("Сервис перенаправляет запрос на другой адрес, а ключ туда не отправляется. "
+                                 "Укажите в настройках точный адрес API") from exc
         raise AssistantError(f"Провайдер ответил ошибкой {exc.code}: {detail}") from exc
     except OSError as exc:
         raise AssistantError(f"Нет связи с {'моделью' if endpoint.is_local else 'провайдером'}: {exc}") from exc

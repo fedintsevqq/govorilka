@@ -58,7 +58,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Переадресацию не выполняем: urllib переносит на новый адрес все заголовки, включая ключ API."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201, PLR0913
-        raise urllib.error.HTTPError(req.full_url, code, f"сервер перенаправляет на {urlparse(newurl).hostname}", headers, fp)
+        fp.close()  # тело переадресации не нужно: соединение закрываем сразу, а не когда его оборвёт сервер
+        raise urllib.error.HTTPError(req.full_url, code, f"сервер перенаправляет на {urlparse(newurl).hostname}", headers, None)
 
 
 def api_opener(context: ssl.SSLContext | None) -> urllib.request.OpenerDirector:
