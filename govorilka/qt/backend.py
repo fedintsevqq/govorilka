@@ -24,7 +24,7 @@ from PySide6.QtCore import Property, QMimeData, QObject, QPoint, QTimer, QUrl, S
 from PySide6.QtGui import QCursor, QDesktopServices, QGuiApplication, QWindow
 
 from govorilka.audio_base import PermissionDeniedError
-from govorilka.config import SAMPLE_RATE, SOURCE_MIC, SOURCE_SYSTEM, Settings
+from govorilka.config import MODELS_DIR, SAMPLE_RATE, SOURCE_MIC, SOURCE_SYSTEM, Settings
 from govorilka.controller import AppState, ClaudeResult, Controller, Listener
 from govorilka.engines import LOADING
 from govorilka.recognizer import Recognizer
@@ -231,6 +231,7 @@ class Backend(QObject):
         self._summary_fraction = -1.0
         self._summary_cancel = threading.Event()
         self._llm_download = ""
+        self._llm_cancel = threading.Event()
         self._llm_fraction = 0.0
         self._ram_gb = summary.total_ram_gb()
         self._model_download = ""
@@ -608,6 +609,7 @@ class Backend(QObject):
         if model is None or self._llm_download:
             return
         self._llm_download, self._llm_fraction = key, 0.0
+        self._llm_cancel.clear()
         self.llmChanged.emit()
 
         def progress(text: str) -> None:
@@ -617,14 +619,19 @@ class Backend(QObject):
 
         def work() -> None:
             try:
-                summary.ensure_engine(progress)
-                summary.ensure_model(model, progress)
+                summary.ensure_engine(progress, self._llm_cancel.is_set)
+                summary.ensure_model(model, progress, self._llm_cancel.is_set)
                 self._llm_done_in.emit(key, "")
             except Exception as exc:  # noqa: BLE001
                 log.warning("Модель итогов %s не скачалась: %s", key, exc)
                 self._llm_done_in.emit(key, str(exc))
 
         threading.Thread(target=work, name="llm-download", daemon=True).start()
+
+    @Slot()
+    @safe_slot
+    def cancelLlmDownload(self) -> None:  # noqa: N802
+        self._llm_cancel.set()
 
     def _on_llm_progress(self, fraction: float) -> None:
         self._llm_fraction = fraction
@@ -633,7 +640,9 @@ class Backend(QObject):
     def _on_llm_done(self, key: str, error: str) -> None:
         self._llm_download = ""
         title = summary.CATALOG_BY_KEY[key].title
-        if error:
+        if error == "Отменено":
+            self.toast.emit(f"Загрузка {title} отменена. Скачанное сохранено: следующая продолжится с того же места", "info")
+        elif error:
             self.toast.emit(f"{title} не скачалась: {error}", "error")
         else:
             self.toast.emit(f"{title} скачана: итоги будут работать без интернета", "success")
@@ -1039,6 +1048,28 @@ class Backend(QObject):
                 "macOS не дал вставить текст: включите Говорилку в Настройки → Конфиденциальность и безопасность → "
                 "Универсальный доступ. Пока — нажмите ⌘V в чате, разговор в буфере", "error"))
         self.toast.emit(result.message, "success" if result.ok else "error")
+
+    def _storage(self, kind: str) -> str:
+        """Где лежат модели и сколько места занято: «~/Library/…/models · 2,3 ГБ»."""
+        folder = MODELS_DIR if kind == "asr" else summary.LLM_DIR
+        used = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) if folder.exists() else 0
+        shown = str(folder)
+        home = str(Path.home())
+        if shown.startswith(home):
+            shown = "~" + shown[len(home):]
+        size = f"{used / 1024**3:.1f} ГБ".replace(".", ",") if used >= 1024**3 else f"{used // 1024**2} МБ"
+        return f"{shown} · занято {size}"
+
+    asrStorage = Property(str, lambda self: self._storage("asr"), notify=catalogChanged)  # noqa: N815
+    llmStorage = Property(str, lambda self: self._storage("llm"), notify=llmChanged)  # noqa: N815
+
+    @Slot(str)
+    @safe_slot
+    def openStorage(self, kind: str) -> None:  # noqa: N802
+        """«Открыть папку» у моделей: Finder или Проводник на папке, куда они скачиваются."""
+        folder = MODELS_DIR if kind == "asr" else summary.LLM_DIR
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     @Slot()
     @safe_slot

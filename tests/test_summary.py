@@ -96,6 +96,66 @@ def test_tampered_model_is_deleted(tmp_path, flaky_server):
     assert target.exists()
 
 
+@pytest.fixture
+def honest_server(monkeypatch):
+    """Отдаёт файл с поддержкой Range; запрос дальше конца файла — 416, как у Hugging Face."""
+    data = bytes(range(256)) * 300
+    state = {"requests": []}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            header = self.headers.get("Range")
+            state["requests"].append(header)
+            start = int(header.split("=")[1].split("-")[0]) if header else 0
+            if start >= len(data):
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{len(data)}")
+                self.end_headers()
+                return
+            body = data[start:]
+            self.send_response(206 if header else 200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(summary.installer, "_check_url", lambda url, allowed=None: None)
+    yield f"http://127.0.0.1:{httpd.server_port}/m.gguf", data, state
+    httpd.shutdown()
+
+
+def test_download_finishes_when_the_expected_size_is_a_little_too_big(tmp_path, honest_server):
+    # размер в каталоге был округлён вверх: после последнего байта сервер отвечает 416, и загрузка
+    # повторялась 20 раз с паузами — «качается», а прогресс стоит
+    url, data, state = honest_server
+    target = tmp_path / "m.gguf"
+    summary.download_resumable(url, target, len(data) + 1000, "модель", (), lambda _s: None)
+    assert target.read_bytes() == data
+    assert len(state["requests"]) == 2
+
+
+def test_cancel_stops_the_download_even_while_it_waits_to_retry(tmp_path, monkeypatch):
+    monkeypatch.setattr(summary.installer, "_check_url", lambda url, allowed=None: None)
+    calls = {"n": 0}
+
+    def cancelled():
+        calls["n"] += 1
+        return calls["n"] > 3
+
+    with pytest.raises(summary.SummaryError, match="Отменено"):
+        summary.download_resumable("http://127.0.0.1:9/m.gguf", tmp_path / "m.gguf", 10, "модель", (), lambda _s: None, cancelled)
+
+
+def test_catalog_sizes_are_exact_bytes():
+    for entry in summary.CATALOG:
+        assert entry.size > 500 * 1024 * 1024 and entry.size % (1024 * 1024) != 0  # байты, а не округлённые мегабайты
+        assert entry.size_mb == round(entry.size / (1024 * 1024))
+
+
 # ---------- итоги ----------
 
 

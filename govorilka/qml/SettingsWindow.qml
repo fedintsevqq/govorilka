@@ -180,6 +180,19 @@ Window {
             Eyebrow { text: sec.heading; tint: Theme.textTertiary }
         }
     }
+    component StorageRow: RowLayout {   // куда скачиваются модели и сколько места заняли
+        property string kind: "asr"
+        Layout.fillWidth: true
+        spacing: 8
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WrapAnywhere
+            text: "Папка моделей: " + (kind === "asr" ? backend.asrStorage : backend.llmStorage)
+            font.pixelSize: 12
+            color: Theme.textTertiary
+        }
+        PillButton { text: "Открыть папку"; implicitHeight: 30; tip: "Показать папку с моделями"; onClicked: backend.openStorage(parent.kind) }
+    }
     component Label: Text { font.pixelSize: 13; font.weight: Font.Medium; color: Theme.textSecondary; Layout.topMargin: 4 }
 
     FolderDialog {
@@ -393,6 +406,8 @@ Window {
                         color: Theme.textTertiary
                     }
                 }
+
+                StorageRow { kind: "asr" }
 
                 // ----- своя модель: с Hugging Face или из папки на компьютере -----
                 ColumnLayout {
@@ -622,24 +637,22 @@ Window {
                     Label { text: "Что нейросети знать о вас и теме" }
                     Rectangle {
                         Layout.fillWidth: true
-                        implicitHeight: 100
+                        implicitHeight: Math.max(100, profileField.implicitHeight + 8)
                         radius: 14
                         color: Theme.core
                         border.color: profileField.activeFocus ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.6) : Theme.shellLine
-                        ScrollView {
+                        TextArea {   // без своей прокрутки: иначе тачпад застревал в поле, и окно не листалось
+                            id: profileField
                             anchors.fill: parent
                             anchors.margins: 4
-                            TextArea {
-                                id: profileField
-                                wrapMode: TextEdit.Wrap
-                                font.pixelSize: 13
-                                color: Theme.text
-                                selectByMouse: true
-                                placeholderText: "Например: тимлид тестирования в банке, 6 лет опыта"
-                                placeholderTextColor: Theme.textTertiary
-                                leftPadding: 10; rightPadding: 10; topPadding: 8
-                                background: Item {}
-                            }
+                            wrapMode: TextEdit.Wrap
+                            font.pixelSize: 13
+                            color: Theme.text
+                            selectByMouse: true
+                            placeholderText: "Например: тимлид тестирования в банке, 6 лет опыта"
+                            placeholderTextColor: Theme.textTertiary
+                            leftPadding: 10; rightPadding: 10; topPadding: 8
+                            background: Item {}
                         }
                     }
                     ToggleRow {
@@ -681,10 +694,13 @@ Window {
                         fraction: backend.llmDownloadFraction
                         busy: backend.llmDownloading !== ""
                         onChoose: win.setValue("summary_model", modelData.key)
+                        cancellable: true
                         onDownload: backend.downloadLlm(modelData.key)
+                        onCancel: backend.cancelLlmDownload()
                         onRemove: backend.deleteLlm(modelData.key)
                     }
                 }
+                StorageRow { kind: "llm" }
             }
 
             Section {
@@ -697,10 +713,20 @@ Window {
                         Layout.fillWidth: true
                         spacing: 2
                         Text {
-                            text: "Говорилка " + (backend.appVersion === "dev" ? (backend.isTrialBuild ? "(пробная сборка: обновления для неё отключены)" : "(запуск из исходников)") : backend.appVersion)
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: "Говорилка " + (backend.appVersion === "dev" ? (backend.isTrialBuild ? "— пробная сборка" : "из исходников") : backend.appVersion)
                             font.pixelSize: Theme.fontBody
                             font.weight: Font.DemiBold
                             color: Theme.text
+                        }
+                        Text {
+                            visible: backend.appVersion === "dev" && backend.isTrialBuild
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: "Обновления для неё отключены: новую версию ставьте с GitHub вручную"
+                            font.pixelSize: 12
+                            color: Theme.textSecondary
                         }
                         Text {
                             Layout.fillWidth: true
@@ -790,22 +816,20 @@ Window {
                 Label { text: "Что попросить ({file} — транскрипт)" }
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: 128
+                    implicitHeight: Math.max(128, promptField.implicitHeight + 8)
                     radius: 14
                     color: Theme.core
                     border.color: promptField.activeFocus ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.6) : Theme.shellLine
-                    ScrollView {
+                    TextArea {   // без своей прокрутки: иначе тачпад застревал в поле, и окно не листалось
+                        id: promptField
                         anchors.fill: parent
                         anchors.margins: 4
-                        TextArea {
-                            id: promptField
-                            wrapMode: TextEdit.Wrap
-                            font.pixelSize: 13
-                            color: Theme.text
-                            selectByMouse: true
-                            leftPadding: 10; rightPadding: 10; topPadding: 8
-                            background: Item {}
-                        }
+                        wrapMode: TextEdit.Wrap
+                        font.pixelSize: 13
+                        color: Theme.text
+                        selectByMouse: true
+                        leftPadding: 10; rightPadding: 10; topPadding: 8
+                        background: Item {}
                     }
                 }
             }

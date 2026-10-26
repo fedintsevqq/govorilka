@@ -10,7 +10,7 @@ Popup {
     objectName: "tour"
     property int step: 0
     // на Mac перед клавишей отдельный шаг про разрешения: без них горячая клавиша и запись звука не заработают
-    readonly property var keys: backend.accessAvailable ? ["intro", "access", "hotkey", "dictation", "tray", "after"] : ["intro", "hotkey", "dictation", "tray", "after"]
+    readonly property var keys: backend.accessAvailable ? ["intro", "access", "hotkey", "dictation", "assistant", "tray", "after"] : ["intro", "hotkey", "dictation", "assistant", "tray", "after"]
     readonly property int steps: keys.length
     readonly property string key: keys[step] || ""
     readonly property var opts: backend.settings
@@ -120,6 +120,7 @@ Popup {
             PageAccess { visible: tour.key === "access" }
             Page1 { visible: tour.key === "hotkey" }
             PageDictation { visible: tour.key === "dictation" }
+            PageAssistant { visible: tour.key === "assistant" }
             Page2 { visible: tour.key === "tray" }
             Page3 { visible: tour.key === "after" }
         }
@@ -279,6 +280,35 @@ Popup {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Подсказки в звонке
+    component PageAssistant: Page {
+        title: "Подсказки в звонке"
+        body: "Собеседник задал вопрос — в отдельном окне сразу появляется ответ, который можно сказать вслух. Включите «Подсказки» в разделе настроек «Подсказки в звонке», потом кнопку «Подсказки» во время записи. Отвечает модель на компьютере или нейросеть по вашему ключу API. Окно не видно при демонстрации экрана."
+        Rectangle {   // окно подсказки, как оно выглядит во время звонка
+            anchors.centerIn: parent
+            width: Math.min(parent.width, 360); height: hint.implicitHeight + 28; radius: 16
+            color: Theme.glass
+            border.color: Theme.shellLine
+            Column {
+                id: hint
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                spacing: 8
+                Row {
+                    spacing: 8
+                    Icon { name: "sparkle"; size: 15; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "Вопрос: «Как вы тестируете API?»"; font.pixelSize: 12; color: Theme.textSecondary; anchors.verticalCenter: parent.verticalCenter }
+                }
+                Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: "Начинаю с контракта: схема запросов и ответов, потом негативные сценарии и нагрузка. Автотесты — в Postman и pytest."
+                    font.pixelSize: 13
+                    color: Theme.text
                 }
             }
         }

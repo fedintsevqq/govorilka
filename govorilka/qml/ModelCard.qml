@@ -11,10 +11,12 @@ AbstractButton {
     property bool downloading: false
     property real fraction: 0
     property bool busy: false   // качается другая модель: вторую параллельно не начинаем
+    property bool cancellable: false   // загрузку можно прервать крестиком
     readonly property bool blocked: info.fit === "no"   // компьютеру не по силам
     signal choose()
     signal download()
     signal remove()
+    signal cancel()
     Layout.fillWidth: true
     implicitHeight: body.implicitHeight + 24
     hoverEnabled: true
@@ -133,6 +135,13 @@ AbstractButton {
                         font.pixelSize: 12
                         font.features: { "tnum": 1 }
                         color: Theme.textSecondary
+                    }
+                    IconButton {
+                        visible: card.downloading && card.cancellable
+                        iconName: "close"
+                        size: 28
+                        tip: "Отменить загрузку. Скачанное останется на диске: следующая загрузка продолжится с того же места"
+                        onClicked: card.cancel()
                     }
                     PillButton {
                         visible: !card.downloading && card.info.downloaded !== true

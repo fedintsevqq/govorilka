@@ -23,6 +23,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -82,12 +83,16 @@ class LlmModel:
     blurb: str
     repo: str
     file: str
-    size_mb: int
+    size: int  # байт, точно как на Hugging Face: по нему видно, что файл докачан
     sha256: str
     min_ram_gb: int  # меньше — модель не запустится или вытеснит всё остальное
     comfortable_ram_gb: int  # меньше — работает, но медленно и мешает другим программам
     license: str
     recommended: bool = False
+
+    @property
+    def size_mb(self) -> int:
+        return round(self.size / (1024 * 1024))
 
     @property
     def url(self) -> str:
@@ -101,17 +106,17 @@ class LlmModel:
 CATALOG: list[LlmModel] = [
     LlmModel(
         "qwen3-4b", "Qwen3 4B", "Хороший баланс: понятные итоги на русском за пару минут на обычном ноутбуке",
-        "unsloth/Qwen3-4B-Instruct-2507-GGUF", "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", 2382,
+        "unsloth/Qwen3-4B-Instruct-2507-GGUF", "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", 2_497_281_120,
         "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597", 8, 12, "Apache 2.0", recommended=True,
     ),
     LlmModel(
         "qwen2.5-1.5b", "Qwen2.5 1.5B", "Самая лёгкая: для компьютеров с 6–8 ГБ памяти. Итоги проще и короче",
-        "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf", 1066,
+        "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "qwen2.5-1.5b-instruct-q4_k_m.gguf", 1_117_320_736,
         "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e", 6, 8, "Apache 2.0",
     ),
     LlmModel(
         "yandexgpt-5-lite-8b", "YandexGPT 5 Lite 8B", "Лучше всех пишет по-русски, но тяжелее и медленнее",
-        "yandex/YandexGPT-5-Lite-8B-instruct-GGUF", "YandexGPT-5-Lite-8B-instruct-Q4_K_M.gguf", 4693,
+        "yandex/YandexGPT-5-Lite-8B-instruct-GGUF", "YandexGPT-5-Lite-8B-instruct-Q4_K_M.gguf", 4_920_741_184,
         "d9ff5b826f20fbcc2f898f9f2349ac21241579f8fbb79cd32148a333623ba228", 12, 16, "лицензия Яндекса",
     ),
 ]
@@ -196,6 +201,8 @@ def download_resumable(url: str, target: Path, size: int, label: str, allowed: t
     part = target.with_name(target.name + ".part")
     failures = 0
     while True:
+        if cancelled():
+            raise SummaryError("Отменено")
         have = part.stat().st_size if part.exists() else 0
         if size and have >= size:
             break
@@ -219,13 +226,32 @@ def download_resumable(url: str, target: Path, size: int, label: str, allowed: t
                             on_status(models.format_progress(label, have, total or None))
             if not size:
                 break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416 and have:  # «дальше ничего нет»: файл уже скачан целиком, дальше его сверит SHA-256
+                break
+            failures += 1
+            if failures > RETRIES:
+                raise SummaryError(f"Не удалось скачать {label}: {exc}. Скачанное сохранено, нажмите ещё раз — продолжится") from exc
+            log.info("Загрузка %s: ответ %s, пробую ещё раз", label, exc)
+            _pause(failures, cancelled)
+            continue
         except (OSError, installer.InstallError) as exc:
             failures += 1
             if failures > RETRIES:
                 raise SummaryError(f"Не удалось скачать {label}: {exc}. Скачанное сохранено, нажмите ещё раз — продолжится") from exc
             log.info("Загрузка %s оборвалась (%s), продолжаю с %d байт", label, exc, have)
-            time.sleep(min(30, 2 * failures))
+            on_status(f"Связь оборвалась, продолжаю {label}… (попытка {failures} из {RETRIES})")
+            _pause(failures, cancelled)
     part.replace(target)
+
+
+def _pause(failures: int, cancelled: Callable[[], bool]) -> None:
+    """Пауза перед повтором, которую можно прервать кнопкой «Отменить»."""
+    end = time.monotonic() + min(30, 2 * failures)
+    while time.monotonic() < end:
+        if cancelled():
+            raise SummaryError("Отменено")
+        time.sleep(0.2)
 
 
 def _fetch(url: str, target: Path, size: int, sha256: str, label: str, allowed: tuple[str, ...],
@@ -275,7 +301,7 @@ def ensure_engine(on_status: Callable[[str], None], cancelled: Callable[[], bool
 def ensure_model(model: LlmModel, on_status: Callable[[str], None], cancelled: Callable[[], bool] = lambda: False) -> Path:
     if is_downloaded(model):
         return model.path
-    _fetch(model.url, model.path, model.size_mb * 1024 * 1024, model.sha256, f"модель {model.title}", HUGGING_FACE,
+    _fetch(model.url, model.path, model.size, model.sha256, f"модель {model.title}", HUGGING_FACE,
            on_status, cancelled)
     return model.path
 
