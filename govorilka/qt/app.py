@@ -34,17 +34,18 @@ def _log_qt_message(kind: QtMsgType, _context: object, message: str) -> None:
         log.warning("Qt: %s", message)
 
 
-class _QuitFilter(QObject):
-    """Ловит запрос на выход из приложения (Cmd+Q) раньше, чем окна успеют его отменить."""
+class _Application(QApplication):
+    """Ловит запрос на выход из приложения (Cmd+Q, «Завершить» в Dock) раньше, чем окна успеют его отменить.
 
-    def __init__(self, backend: Backend) -> None:
-        super().__init__(backend)
-        self._backend = backend
+    Только событие самого приложения, а не фильтр на всё приложение: такой фильтр на Python получал каждое событие
+    каждого объекта, и на macOS при открытии нового окна это портило память (окно настроек падало)."""
 
-    def eventFilter(self, _watched: QObject, event: QEvent) -> bool:  # noqa: N802
-        if event.type() == QEvent.Type.Quit:
-            self._backend.begin_quit()
-        return False
+    on_quit = None  # вызывается до того, как окна получат запрос на закрытие
+
+    def event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Quit and self.on_quit is not None:
+            self.on_quit()
+        return super().event(event)
 
 
 def create_engine(backend: Backend, strict: bool = False) -> QQmlApplicationEngine:
@@ -221,7 +222,7 @@ def run(background: bool = False, updated: bool = False, live_check: bool = Fals
         return 0  # уже запущена другая копия, ей отправлено «покажись»
 
     QQuickStyle.setStyle("Basic")  # стили Windows/macOS перекрасили бы наши кнопки и поля
-    app = QApplication(sys.argv)
+    app = _Application(sys.argv)
     app.setApplicationName("Говорилка")
     app.setOrganizationName("Govorilka")
     app.setWindowIcon(QIcon(str(ASSETS_DIR / "icon.png")))
@@ -249,9 +250,7 @@ def run(background: bool = False, updated: bool = False, live_check: bool = Fals
         root.hide()  # автозапуск: окно не выскакивает, работают трей и горячая клавиша
     if sys.platform == "darwin":
         # Cmd+Q и «Завершить» в Dock приходят как событие выхода: пока окно «закрывается в трей», оно бы его отменило
-        quit_filter = _QuitFilter(backend)
-        app.installEventFilter(quit_filter)
-        app._quit_filter = quit_filter  # type: ignore[attr-defined]  # держим ссылку: иначе фильтр соберёт сборщик мусора
+        app.on_quit = backend.begin_quit
 
         # щелчок по значку в Dock, когда окно спрятано, — показать окно
         def on_state(state: Qt.ApplicationState) -> None:
