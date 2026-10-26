@@ -32,7 +32,13 @@ Mac (Терминал, программа ляжет в «Программы»):
 curl -fsSL https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.sh | bash
 ```
 
-**Или вручную.** Скачайте файл для своей системы со страницы [Releases](https://github.com/fedintsevqq/govorilka/releases/latest):
+Mac через Homebrew:
+
+```bash
+brew install --cask fedintsevqq/tap/govorilka
+```
+
+**Или вручную.** Сайт программы: https://fedintsevqq.github.io/govorilka/. Скачайте файл для своей системы со страницы [Releases](https://github.com/fedintsevqq/govorilka/releases/latest):
 
 - Windows — `Govorilka-…-windows-x64.exe`, запускается без установки;
 - Mac на Apple Silicon (M1–M4) — `Govorilka-…-macos-apple-silicon.dmg`;

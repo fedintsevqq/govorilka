@@ -3,15 +3,18 @@
 Говорилка — на русском и для русской речи, поэтому главные площадки русскоязычные. Порядок важен: сначала
 «витрина» (сайт, GitHub, установка одной командой), потом рассказ, потом каталоги.
 
-## 1. Витрина — готово, нужно ваше «да» на публикацию
+## 1. Витрина
 
 | Шаг | Что даёт | Статус |
 |---|---|---|
-| Сайт на GitHub Pages (`site/`) | одна понятная ссылка для постов: fedintsevqq.github.io/govorilka | страница готова |
-| Описание, темы и сайт у репозитория | находят по поиску GitHub (transcription, russian, offline…) | готово к применению |
-| Картинка-превью репозитория | красивая карточка, когда ссылкой делятся в Telegram | `site/img/recording-dark.png` |
-| winget (`packaging/winget/`) | `winget install fedintsevqq.Govorilka` | манифест проверен `winget validate` |
-| Homebrew (`packaging/homebrew/`) | `brew install --cask fedintsevqq/tap/govorilka` | формула готова, нужен репозиторий homebrew-tap |
+| Сайт на GitHub Pages (`site/`) | одна понятная ссылка для постов | работает: https://fedintsevqq.github.io/govorilka/ |
+| Описание, темы и сайт у репозитория | находят по поиску GitHub (transcription, russian, offline…) | сделано |
+| Картинка-превью репозитория | красивая карточка, когда ссылкой делятся в Telegram | загрузить `site/img/recording-dark.png` в Settings → Social preview (только вручную) |
+| Homebrew (`packaging/homebrew/`) | `brew install --cask fedintsevqq/tap/govorilka` | работает: github.com/fedintsevqq/homebrew-tap, CI ставит на Apple Silicon и Intel |
+| winget (`packaging/winget/`) | `winget install fedintsevqq.Govorilka` | pull request microsoft/winget-pkgs#462252, ждёт подписи CLA, потом проверка Microsoft |
+
+При каждом новом релизе: обновить версию и SHA-256 в `packaging/homebrew/govorilka.rb` (и в homebrew-tap) и
+отправить новый манифест в winget (`wingetcreate update fedintsevqq.Govorilka -v <версия> -u <ссылка> --submit`).
 
 ## 2. Рассказ — тексты готовы, публикуете вы
 
