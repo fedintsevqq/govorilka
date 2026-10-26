@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Говорилка — расшифровка созвонов на русском без облака</title>
+<meta name="description" content="Бесплатная программа для Windows и Mac: пишет созвон текстом прямо во время звонка, различает собеседников, составляет итоги. Всё на вашем компьютере, без облака и без бота в звонке.">
+<meta property="og:title" content="Говорилка — расшифровка созвонов на русском без облака">
+<meta property="og:description" content="Текст звонка по ходу разговора, итоги и задачи, диктовка в любое окно. Бесплатно, открытый код, Windows и Mac.">
+<meta property="og:image" content="https://fedintsevqq.github.io/govorilka/img/recording-dark.png">
+<meta property="og:type" content="website">
+<link rel="icon" href="img/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0c10; --panel: #13151b; --line: #23262e; --text: #eef0f4; --muted: #a2a8b4; --faint: #6f7684;
+    --accent-a: #7c5cff; --accent-b: #3fb6ff; --ok: #36d39a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background-image: radial-gradient(900px 500px at 15% -10%, rgba(124,92,255,.18), transparent 60%),
+                      radial-gradient(800px 500px at 100% 10%, rgba(63,182,255,.12), transparent 60%);
+  }
+  a { color: var(--accent-b); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 22px 0; }
+  header img { width: 36px; height: 36px; border-radius: 10px; }
+  header b { font-size: 18px; }
+  header nav { margin-left: auto; display: flex; gap: 18px; font-size: 15px; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  .hero { display: grid; grid-template-columns: 1fr; gap: 28px; padding: 36px 0 20px; }
+  h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; letter-spacing: -1.2px; margin: 0; }
+  .lead { font-size: 19px; color: var(--muted); max-width: 680px; margin: 0; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 13px 20px; border-radius: 999px;
+    font-weight: 600; text-decoration: none; color: var(--text); border: 1px solid var(--line); background: var(--panel);
+  }
+  .btn.primary { border: 0; color: #fff; background: linear-gradient(90deg, var(--accent-a), var(--accent-b)); }
+  .note { color: var(--faint); font-size: 14px; margin: 0; }
+  .shot { width: 100%; height: auto; border-radius: 18px; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.45); display: block; }
+  section { padding: 44px 0; }
+  h2 { font-size: 28px; letter-spacing: -.5px; margin: 0 0 18px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .split { display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; align-items: center; }
+  .split p { color: var(--muted); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+  pre { background: #0f1116; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 14px; margin: 8px 0 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--faint); font-weight: 500; }
+  td.yes { color: var(--ok); }
+  footer { color: var(--faint); font-size: 14px; padding: 36px 0 50px; border-top: 1px solid var(--line); margin-top: 20px; }
+  @media (max-width: 820px) {
+    .grid { grid-template-columns: 1fr; }
+    .split { grid-template-columns: 1fr; }
+    header nav { display: none; }
+    .table-wrap { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="img/icon.png" alt="">
+    <b>Говорилка</b>
+    <nav>
+      <a href="#features">Что умеет</a>
+      <a href="#install">Установка</a>
+      <a href="https://github.com/fedintsevqq/govorilka">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <h1>Созвон превращается в текст прямо во время разговора</h1>
+    <p class="lead">Говорилка пишет ваш голос и собеседников, различает, кто что сказал, а после звонка выписывает решения и задачи. Всё считается на вашем компьютере: без облака, без бота в звонке и без подписки.</p>
+    <div class="buttons" id="downloads">
+      <a class="btn primary" id="dl-main" href="https://github.com/fedintsevqq/govorilka/releases/latest">Скачать бесплатно</a>
+      <a class="btn" id="dl-win" href="https://github.com/fedintsevqq/govorilka/releases/latest">Windows 10/11</a>
+      <a class="btn" id="dl-arm" href="https://github.com/fedintsevqq/govorilka/releases/latest">Mac на M1–M4</a>
+      <a class="btn" id="dl-intel" href="https://github.com/fedintsevqq/govorilka/releases/latest">Mac на Intel</a>
+    </div>
+    <p class="note" id="version">Открытый код, лицензия MIT. Около 170 МБ, модели распознавания (880 МБ) скачаются при первом запуске.</p>
+    <img class="shot" src="img/recording-dark.png" width="1120" height="740" fetchpriority="high" alt="Окно Говорилки во время записи: реплики «Я» и собеседников, отметка важного момента">
+  </div>
+
+  <section id="features">
+    <h2>Что умеет</h2>
+    <div class="grid">
+      <div class="card"><h3>Текст по ходу звонка</h3><p>Zoom, Телемост, Teams, браузер — любая программа, которую вы слышите. Ваши реплики подписаны «Я», собеседники идут по номерам или по именам.</p></div>
+      <div class="card"><h3>Хорошо понимает русский</h3><p>Модель GigaAM v3 от Сбера сама ставит точки и запятые. Ещё девять моделей в каталоге: лёгкие, телефонные, английские.</p></div>
+      <div class="card"><h3>Ничего не уходит в сеть</h3><p>Звук и текст остаются на компьютере. Аккаунт не нужен, бот в звонок не приходит. Спокойно для переговоров с клиентами.</p></div>
+      <div class="card"><h3>Итоги и задачи</h3><p>Кратко, решения, кто что делает и к какому сроку. Пишет языковая модель на вашем же компьютере.</p></div>
+      <div class="card"><h3>Расшифровка файлов</h3><p>Аудио и видео любой длины: mp3, m4a, wav, mp4, mkv, mov. Двухчасовая запись не съест память.</p></div>
+      <div class="card"><h3>Диктовка в любое окно</h3><p>Зажали Ctrl + Alt, сказали, отпустили — текст появился там, где курсор: в Telegram, браузере, Word.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="split">
+      <img class="shot" src="img/summary.png" width="742" height="572" loading="lazy" alt="Вкладка «Итоги»: кратко, решения, задачи и открытые вопросы">
+      <div>
+        <h2>После звонка — итоги</h2>
+        <p>Одна кнопка, и программа выпишет главное: о чём договорились, кто что делает и какие вопросы остались. Итоги сохраняются в тот же файл, что и разговор.</p>
+        <p>Хотите итоги посильнее — отправьте разговор в ChatGPT, Claude или GigaChat в один клик, вместе с вашим запросом.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Чем отличается</h2>
+    <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Говорилка</th><th>Облачные сервисы встреч</th><th>Whisper-программы</th></tr>
+      <tr><td>Цена</td><td class="yes">бесплатно</td><td>от 500 ₽ в месяц</td><td>бесплатно или разово</td></tr>
+      <tr><td>Где хранится запись</td><td class="yes">у вас</td><td>на их сервере</td><td>у вас</td></tr>
+      <tr><td>Бот в звонке</td><td class="yes">не нужен</td><td>часто нужен</td><td>не нужен</td></tr>
+      <tr><td>Вы и собеседник отдельно</td><td class="yes">да</td><td>да</td><td>обычно нет</td></tr>
+      <tr><td>Итоги и задачи</td><td class="yes">да</td><td>да</td><td>редко</td></tr>
+      <tr><td>Русский язык</td><td class="yes">GigaAM v3</td><td>хорошо у российских</td><td>Whisper, слабее</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>Установка</h2>
+    <p>Проще всего одной командой: программа скачается с GitHub, сверит контрольную сумму и установится без предупреждений «неизвестный издатель».</p>
+    <p><b>Windows</b> (PowerShell):</p>
+    <pre>irm https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.ps1 | iex</pre>
+    <p><b>Mac</b> (Терминал):</p>
+    <pre>curl -fsSL https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.sh | bash</pre>
+    <p>Или скачайте файл кнопкой выше. Программа не подписана платным сертификатом, поэтому при первом запуске Windows покажет «Подробнее → Выполнить в любом случае», а Mac — «Системные настройки → Конфиденциальность и безопасность → Всё равно открыть». Дальше обновления ставятся кнопкой «Установить» внутри программы.</p>
+  </section>
+
+  <footer>
+    Говорилка — открытый проект. Исходный код, вопросы и ошибки — на <a href="https://github.com/fedintsevqq/govorilka">GitHub</a>.
+  </footer>
+</div>
+<script>
+  // прямые ссылки на файлы последней версии; без сети или при ограничении GitHub остаются ссылки на страницу релиза
+  fetch("https://api.github.com/repos/fedintsevqq/govorilka/releases/latest")
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(release => {
+      const find = part => (release.assets || []).find(a => a.name.includes(part));
+      const links = { "dl-win": find("windows"), "dl-arm": find("apple-silicon"), "dl-intel": find("macos-intel") };
+      for (const [id, asset] of Object.entries(links)) if (asset) document.getElementById(id).href = asset.browser_download_url;
+      // главная кнопка — под систему посетителя; у Mac по умолчанию Apple Silicon, Intel — отдельной кнопкой рядом
+      const mac = /Mac/i.test(navigator.platform || navigator.userAgent);
+      const main = document.getElementById("dl-main");
+      const asset = mac ? links["dl-arm"] : links["dl-win"];
+      if (asset) main.href = asset.browser_download_url;
+      main.textContent = mac ? "Скачать для Mac" : "Скачать для Windows";
+      document.getElementById("version").textContent =
+        "Версия " + release.tag_name.replace(/^v/, "") + ". Открытый код, лицензия MIT. Модели распознавания (880 МБ) скачаются при первом запуске.";
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>
