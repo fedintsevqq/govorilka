@@ -578,18 +578,19 @@ class LlamaServer:
     """llama-server на время составления итогов или подсказок. Слушает только этот компьютер и отвечает только
     с ключом, который знает Говорилка: другие программы на компьютере не прочитают через него разговор."""
 
-    def __init__(self, engine: Path, model: Path, threads: int | None = None) -> None:
+    def __init__(self, engine: Path, model: Path, threads: int | None = None, gpu: bool = True) -> None:
         self._port = _free_port()
         self._url = f"http://127.0.0.1:{self._port}"
         self.api_key = secrets.token_urlsafe(24)
         # Apple Silicon считает на видеоядре (Metal). GOVORILKA_LLM_GPU=0 — только процессор: в виртуальных машинах
         # (сборка в CI) Metal выдаёт бессмыслицу
-        metal = sys.platform == "darwin" and platform.machine() == "arm64" and os.environ.get("GOVORILKA_LLM_GPU") != "0"
-        gpu = ["-ngl", "99" if metal else "0"]
+        self.metal = (gpu and sys.platform == "darwin" and platform.machine() == "arm64"
+                      and os.environ.get("GOVORILKA_LLM_GPU") != "0")
+        gpu_layers = ["-ngl", "99" if self.metal else "0"]
         command = [
             str(engine), "-m", str(model), "--host", "127.0.0.1", "--port", str(self._port),
             "-c", str(CONTEXT_TOKENS), "--threads", str(threads or max(2, (os.cpu_count() or 4) - 1)),
-            "--no-webui", "--api-key", self.api_key, *gpu,
+            "--no-webui", "--api-key", self.api_key, *gpu_layers,
         ]
         flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW: без чёрного окна консоли
         # журнал движка — в файл: канал, который никто не читает, переполнился бы, и движок встал бы
@@ -684,6 +685,41 @@ def clean_answer(text: str) -> str:
     # раздел, в котором модель написала «Нет» или «—», не показываем: пустой раздел только мешает
     text = re.sub(r"(?m)^#{2,4} [^\n]+\n\s*(?:нет|—|-|не указано)\.?\s*(?=\n#|\Z)", "", text, flags=re.IGNORECASE)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def looks_like_text(text: str) -> bool:
+    """Ответ модели похож на человеческий текст: в основном буквы русского или латинского алфавита, цифры и знаки.
+    Сломанный расчёт на видеоядре выдаёт смесь иероглифов, кусков кода и случайных символов."""
+    letters = [c for c in text if not c.isspace()]
+    if not letters:
+        return False
+    usual = sum(1 for c in letters if c.isascii() or "\u0400" <= c <= "\u04ff" or c in "«»—–…№")
+    return usual / len(letters) >= 0.9
+
+
+def start_server(engine: Path, model: Path, cancelled: Callable[[], bool] = lambda: False) -> LlamaServer:
+    """Запускает llama-server и проверяет короткий ответ. На видеоядре ответ — бессмыслица (бывает в виртуальных
+    машинах и на редких сборках macOS): перезапускаем на процессоре. Медленнее, но правильно."""
+    server = LlamaServer(engine, model)
+    try:
+        server.wait_ready(cancelled=cancelled)
+        if not getattr(server, "metal", False):
+            return server
+        probe = server.chat("Отвечай по-русски.", "Напиши одно предложение: какой сегодня план работы?", max_tokens=40)
+        if looks_like_text(probe):
+            return server
+        log.warning("Модель на видеоядре отвечает бессмыслицей (%r): перезапускаю на процессоре", probe[:80])
+    except BaseException:
+        server.stop()
+        raise
+    server.stop()
+    server = LlamaServer(engine, model, gpu=False)
+    try:
+        server.wait_ready(cancelled=cancelled)
+    except BaseException:
+        server.stop()
+        raise
+    return server
 
 
 def safe_markdown(text: str) -> str:

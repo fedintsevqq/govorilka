@@ -122,9 +122,8 @@ def e2e() -> list[str]:
     model = min(summary.CATALOG, key=lambda m: m.size)
     engine = summary.ensure_engine(print)
     weights = summary.ensure_model(model, print)
-    server = summary.LlamaServer(engine, weights)
+    server = summary.start_server(engine, weights)
     try:
-        server.wait_ready()
         text = summary.summarize(server, "Я: Давайте выпустим релиз в пятницу.\nСобеседник 1: Хорошо, я подготовлю сборку к четвергу.")
     finally:
         server.stop()

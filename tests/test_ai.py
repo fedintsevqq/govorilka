@@ -309,7 +309,7 @@ def test_foreign_app_is_not_opened_from_a_blocked_country_either(tmp_path, monke
 def test_windows_search_checks_every_drive_not_only_c(monkeypatch):
     from govorilka import desktop_apps as d
 
-    monkeypatch.setattr(d.os.path, "exists", lambda p: p == "F:\Program Files\ChatGPT\ChatGPT.exe")
+    monkeypatch.setattr(d.os.path, "exists", lambda p: p == r"F:\Program Files\ChatGPT\ChatGPT.exe")
     assert d._windows_exe_on_any_drive(d.APPS["chatgpt"]) == r"F:\Program Files\ChatGPT\ChatGPT.exe"
     monkeypatch.setattr(d.os.path, "exists", lambda p: False)
     assert d._windows_exe_on_any_drive(d.APPS["chatgpt"]) is None

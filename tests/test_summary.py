@@ -333,3 +333,33 @@ def test_model_text_is_shown_without_images_links_and_html():
                                   "https://evil.com/p **жирно**, 3 < 5 > 2")
     assert "evil/a.png" not in shown and "](" not in shown and "<img" not in shown and "https://" not in shown
     assert "**жирно**" in shown and "сайт" in shown and "3 < 5 > 2" in shown
+
+
+def test_garbage_from_the_model_is_recognised():
+    assert summary.looks_like_text("Сегодня план: доделать релиз и проверить оплату.")
+    assert summary.looks_like_text("Plan for today: ship the release.")
+    garbage = "limp一经$）\r\n cruzأوضاعstants dictHSChooserVi之力 <![/hooks）"
+    assert not summary.looks_like_text(garbage)
+    assert not summary.looks_like_text("   ")
+
+
+def test_server_with_broken_gpu_math_is_restarted_on_the_processor(monkeypatch, tmp_path):
+    started = []
+
+    class Server:
+        def __init__(self, engine, model, threads=None, gpu=True):
+            self.metal, self.stopped = gpu, False
+            started.append(self)
+
+        def wait_ready(self, cancelled=None):
+            pass
+
+        def chat(self, system, user, max_tokens=0):
+            return "一经$）cruzأوضاع之力" if self.metal else "План: релиз в пятницу."
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr(summary, "LlamaServer", Server)
+    server = summary.start_server(tmp_path, tmp_path)
+    assert [s.metal for s in started] == [True, False] and started[0].stopped and server is started[1]

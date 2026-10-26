@@ -476,9 +476,8 @@ class Controller:
             engine = summary.ensure_engine(status, cancelled)
             weights = summary.ensure_model(model, status, cancelled)
             status(f"Загружаю {model.title}…")
-            server = summary.LlamaServer(engine, weights)
+            server = summary.start_server(engine, weights, cancelled)
             server_box.append(server)
-            server.wait_ready(cancelled=cancelled)
             return assistant.ChatEndpoint(server.url + "/v1", server.api_key)
 
         def stop_server() -> None:
@@ -734,7 +733,7 @@ class Controller:
         weights = summary.ensure_model(model, on_status, cancelled)
         self.unload_models()  # модели распознавания сейчас не нужны: отдаём их гигабайт модели итогов
         on_status(f"Загружаю {model.title}…")
-        server = summary.LlamaServer(engine, weights)
+        server = summary.start_server(engine, weights, cancelled)
         done = threading.Event()
 
         def stop_on_cancel() -> None:  # «Отменить» обрывает и долгий ответ модели, а не только паузы между частями
@@ -745,7 +744,6 @@ class Controller:
 
         threading.Thread(target=stop_on_cancel, name="summary-cancel", daemon=True).start()
         try:
-            server.wait_ready(cancelled=cancelled)
             text = summary.summarize(server, transcript.to_plain_text(), on_status, cancelled)
         except summary.SummaryError:
             if cancelled():
