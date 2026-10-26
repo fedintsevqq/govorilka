@@ -1,0 +1,44 @@
+# Живы ли модели: каждый день проверяем все ссылки (без скачивания самих файлов), раз в неделю — настоящую загрузку
+# движка и самой лёгкой модели итогов на Windows и Mac с итогами короткого разговора. Умерла ссылка — правим
+# catalog/models.json, и приложения подхватывают новый адрес без новой версии.
+name: models
+
+on:
+  schedule:
+    - cron: "17 5 * * *"   # каждый день: ссылки
+    - cron: "41 6 * * 1"   # по понедельникам: ещё и настоящая загрузка
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["catalog/**", "govorilka/summary.py", "govorilka/model_catalog.py", "govorilka/asr_models.py", "tools/check_models.py"]
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Every model link answers with the same file
+        run: python tools/check_models.py
+
+  download:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '41 6 * * 1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Download the engine and the lightest model, summarise a short call
+        run: python tools/check_models.py --e2e
