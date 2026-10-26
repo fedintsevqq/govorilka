@@ -70,7 +70,7 @@ def _expected_bytes(resolver: Any, quantization: str | None = None) -> int | Non
         files = [f.replace("?", ".") if "?" in f else f for f in files]  # «encoder?int8.onnx» — это «encoder.int8.onnx»
         patterns = ["config.json", "config.yaml", *files, *(f.removeprefix("**/") for f in files)]
         patterns += [str(Path(f).with_suffix(".onnx?data")) for f in files if f.endswith(".onnx")]
-        info = HfApi().model_info(resolver.repo_id, files_metadata=True)
+        info = HfApi().model_info(resolver.repo_id, files_metadata=True, timeout=10)  # зависшая сеть не держит загрузку
         return sum(
             s.size or 0 for s in info.siblings or [] if any(fnmatch.fnmatch(s.rfilename, p) for p in patterns)
         ) or None

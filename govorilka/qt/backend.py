@@ -41,7 +41,7 @@ from govorilka.hotkeys import (
     windows_language_switch,
 )
 from govorilka.pipeline import TextEvent
-from govorilka import ai, asr_models, assistant, features, installer, permissions, secrets_store, updates, version
+from govorilka import ai, asr_models, assistant, features, installer, model_catalog, permissions, secrets_store, updates, version
 from govorilka import models as model_files  # имя models занято свойством со списком моделей
 from govorilka import summary
 from govorilka.qt import autopaste, capture_guard, mac_overlay
@@ -172,6 +172,7 @@ class Backend(QObject):
     _summary_done_in = Signal(str, str)
     _llm_progress_in = Signal(float)
     _llm_done_in = Signal(str, str)
+    _llm_catalog_in = Signal()
     summaryChanged = Signal()  # noqa: N815
     summaryProgress = Signal()  # noqa: N815
     llmChanged = Signal()  # noqa: N815
@@ -288,6 +289,7 @@ class Backend(QObject):
             (self._summary_done_in, self._on_summary_done),
             (self._llm_progress_in, self._on_llm_progress),
             (self._llm_done_in, self._on_llm_done),
+            (self._llm_catalog_in, self.llmChanged.emit),
             (self._model_progress_in, self._on_model_progress),
             (self._model_done_in, self._on_model_done),
             (self._dictation_text_in, self._on_dictation_text),
@@ -317,6 +319,17 @@ class Backend(QObject):
             )
         self.controller.init_autostart()
         self._whats_new_since = self.controller.whats_new_since() or ""
+        self._refresh_model_catalog()
+
+    def _refresh_model_catalog(self) -> None:
+        """Свежие адреса моделей итогов из репозитория: умершую ссылку правят там, без новой версии Говорилки."""
+        model_catalog.load_cached()
+
+        def work() -> None:
+            if model_catalog.refresh():
+                self._llm_catalog_in.emit()
+
+        threading.Thread(target=work, name="model-catalog", daemon=True).start()
 
     def flush_startup_notices(self) -> None:
         """Сообщения при запуске (нет разрешения, старая версия рядом) показываем, когда окно уже готово."""
@@ -399,7 +412,7 @@ class Backend(QObject):
 
     assistantPhase = Property(str, lambda self: self._assist_phase, notify=assistantChanged)  # noqa: N815
     assistantQuestion = Property(str, lambda self: self._assist_question, notify=assistantChanged)  # noqa: N815
-    assistantAnswer = Property(str, lambda self: self._assist_answer, notify=assistantChanged)  # noqa: N815
+    assistantAnswer = Property(str, lambda self: summary.safe_markdown(self._assist_answer), notify=assistantChanged)  # noqa: N815
     assistantNote = Property(str, lambda self: self._assist_note, notify=assistantChanged)  # noqa: N815
     assistantHidden = Property(bool, lambda self: self._assist_hidden, notify=assistantChanged)  # noqa: N815
     assistantProtection = Property(str, lambda self: self._assist_protection, notify=assistantChanged)  # noqa: N815
@@ -531,7 +544,7 @@ class Backend(QObject):
 
     # ---------- итоги созвона на локальной модели ----------
 
-    summaryText = Property(str, lambda self: self._transcript.summary if self._transcript else "", notify=summaryChanged)  # noqa: N815
+    summaryText = Property(str, lambda self: summary.safe_markdown(self._transcript.summary) if self._transcript else "", notify=summaryChanged)  # noqa: N815
     summaryBusy = Property(bool, lambda self: self._summary_busy, notify=summaryChanged)  # noqa: N815
     summaryStatus = Property(str, lambda self: self._summary_status, notify=summaryProgress)  # noqa: N815
     summaryFraction = Property(float, lambda self: self._summary_fraction, notify=summaryProgress)  # noqa: N815
@@ -654,7 +667,15 @@ class Backend(QObject):
         model = summary.CATALOG_BY_KEY.get(key)
         if model is None:
             return
-        freed = summary.delete_model(model)
+        if self._llm_download == key or self._summary_busy or (self._assist_phase and self._assist_phase != "error"):
+            # модель качается или работает: удалённый на ходу файл сломал бы итоги или подсказки
+            self.toast.emit(f"{model.title} сейчас занята: дождитесь конца загрузки, итогов или записи с подсказками", "info")
+            return
+        try:
+            freed = summary.delete_model(model)
+        except OSError as exc:
+            self.toast.emit(f"Не получилось удалить {model.title}: файл занят другой программой ({exc.strerror})", "error")
+            return
         self.llmChanged.emit()
         self.toast.emit(f"{model.title} удалена" + (f": освобождено {freed} МБ" if freed else ""), "success")
 
@@ -679,7 +700,9 @@ class Backend(QObject):
     def refreshCatalog(self) -> None:  # noqa: N802
         """Какие модели уже скачаны: смотрим, есть ли в папке модели файлы ONNX, когда открывают настройки.
         Быстро и в потоке окна: фоновый поток мог бы прислать ответ уже закрытому окну."""
-        self._on_catalog({m.key: has_model_files(asr_models.parse(m.key).local_dir) for m in asr_models.CATALOG})
+        # «скачана» — только если на месте все файлы модели: первый докачанный .onnx из трёх ещё не модель
+        self._on_catalog({m.key: has_model_files(asr_models.parse(m.key).local_dir) and model_files.is_downloaded("asr", m.key)
+                          for m in asr_models.CATALOG})
 
     def _on_catalog(self, found: dict) -> None:
         self._downloaded = dict(found)

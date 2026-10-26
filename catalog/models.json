@@ -1,0 +1,82 @@
+{
+  "format": 1,
+  "llm": [
+    {
+      "key": "qwen3-4b",
+      "title": "Qwen3 4B",
+      "blurb": "Хороший баланс: понятные итоги на русском за пару минут на обычном ноутбуке",
+      "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "size": 2497281120,
+      "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "min_ram_gb": 8,
+      "comfortable_ram_gb": 12,
+      "license": "Apache 2.0",
+      "recommended": true,
+      "urls": [
+        "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        "https://modelscope.cn/models/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/master/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+      ]
+    },
+    {
+      "key": "qwen2.5-1.5b",
+      "title": "Qwen2.5 1.5B",
+      "blurb": "Самая лёгкая: для компьютеров с 6–8 ГБ памяти. Итоги проще и короче",
+      "file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "size": 1117320736,
+      "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+      "min_ram_gb": 6,
+      "comfortable_ram_gb": 8,
+      "license": "Apache 2.0",
+      "recommended": false,
+      "urls": [
+        "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+      ]
+    },
+    {
+      "key": "yandexgpt-5-lite-8b",
+      "title": "YandexGPT 5 Lite 8B",
+      "blurb": "Лучше всех пишет по-русски, но тяжелее и медленнее",
+      "file": "YandexGPT-5-Lite-8B-instruct-Q4_K_M.gguf",
+      "size": 4920741184,
+      "sha256": "d9ff5b826f20fbcc2f898f9f2349ac21241579f8fbb79cd32148a333623ba228",
+      "min_ram_gb": 12,
+      "comfortable_ram_gb": 16,
+      "license": "лицензия Яндекса",
+      "recommended": false,
+      "urls": [
+        "https://huggingface.co/yandex/YandexGPT-5-Lite-8B-instruct-GGUF/resolve/9fe287d2f512503046bb008aed350f2b4bbb903d/YandexGPT-5-Lite-8B-instruct-Q4_K_M.gguf",
+        "https://modelscope.cn/models/yandex/YandexGPT-5-Lite-8B-instruct-GGUF/resolve/master/YandexGPT-5-Lite-8B-instruct-Q4_K_M.gguf"
+      ]
+    }
+  ],
+  "engine": {
+    "build": "b11550",
+    "platforms": {
+      "win32-x64": {
+        "asset": "llama-b11550-bin-win-cpu-x64.zip",
+        "sha256": "e61c4aa5dd87f62c081d941115725e5de26f04ed04e07dd2a5f30e697767dcab",
+        "binary": "llama-server.exe",
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/releases/download/b11550/llama-b11550-bin-win-cpu-x64.zip"
+        ]
+      },
+      "darwin-arm64": {
+        "asset": "llama-b11550-bin-macos-arm64.tar.gz",
+        "sha256": "3dcbbba52d493f3875d86602a273f8ef742e1b411295ceb1e9c2de80aa80950b",
+        "binary": "llama-b11550/llama-server",
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/releases/download/b11550/llama-b11550-bin-macos-arm64.tar.gz"
+        ]
+      },
+      "darwin-x64": {
+        "asset": "llama-b11550-bin-macos-x64.tar.gz",
+        "sha256": "48a3f733cd19b1b620997656ea77c109176aa5605b7d98ef26d81d11989001cb",
+        "binary": "llama-b11550/llama-server",
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/releases/download/b11550/llama-b11550-bin-macos-x64.tar.gz"
+        ]
+      }
+    }
+  }
+}

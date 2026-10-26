@@ -85,7 +85,8 @@ def can_install() -> bool:
 def _check_url(url: str, allowed: tuple[str, ...] = ALLOWED_HOSTS) -> None:
     parsed = urlparse(url)
     host = parsed.hostname or ""
-    if parsed.scheme != "https" or not any(host == h.lstrip(".") or host.endswith(h) for h in allowed):
+    # «github.com» — сам github.com, «.githubusercontent.com» — любой его поддомен; evilgithub.com не подходит
+    if parsed.scheme != "https" or not any(host == h.lstrip(".") or (h.startswith(".") and host.endswith(h)) for h in allowed):
         raise InstallError(f"Скачивание с этого адреса отклонено: {host or url}")
 
 
@@ -155,6 +156,10 @@ def _command(parts: list[str]) -> str:
     return " ".join(f'"{part}"' if " " in part or "\\" in part else part for part in parts)
 
 
+def _bat(text: str) -> str:
+    return text.replace("%", "%%")
+
+
 def swap_script(
     current: Path,
     new: Path,
@@ -165,15 +170,16 @@ def swap_script(
 ) -> str:
     """Текст скрипта-подменителя (cmd). restart и fallback — чем запускать новую или прежнюю версию (в тестах подменяются
     безобидной командой); max_wait — сколько секунд пробовать подменить файл."""
-    start = _command(restart or [str(current), UPDATED_FLAG])
-    start_old = _command(fallback or [str(current)])
-    backup = f"{current}{BACKUP_SUFFIX}"
+    # «%» в пути cmd читает как переменную («100% работа» ломала подмену): в файле скрипта он пишется как «%%»
+    start = _bat(_command(restart or [str(current), UPDATED_FLAG]))
+    start_old = _bat(_command(fallback or [str(current)]))
+    backup = _bat(f"{current}{BACKUP_SUFFIX}")
     return "\r\n".join([
         "@echo off",
         "chcp 65001 >nul",
         "set PYINSTALLER_RESET_ENVIRONMENT=1",  # без этого новый onefile-процесс унаследовал бы папку старого
-        f'set "TARGET={current}"',
-        f'set "NEW={new}"',
+        f'set "TARGET={_bat(str(current))}"',
+        f'set "NEW={_bat(str(new))}"',
         f'set "BACKUP={backup}"',
         "set /a tries=0",
         # 1. ждём, пока Говорилка закроется (строки без скобок: переменные раскрываются при выполнении каждой строки)
@@ -215,8 +221,9 @@ def swap_script(
 
 
 def spawn_swap(current: Path, new: Path, restart: list[str] | None = None, **options: object) -> Path:
-    """Пишет скрипт рядом с новым файлом и запускает его отдельно: он переживёт закрытие Говорилки."""
-    script = new.with_name("govorilka-update.cmd")
+    """Пишет скрипт во временную папку системы и запускает его отдельно: он переживёт закрытие Говорилки.
+    Не рядом с программой: «%» в пути к папке cmd раскрыл бы как переменную ещё при запуске скрипта."""
+    script = Path(tempfile.gettempdir()) / f"govorilka-update-{os.getpid()}.cmd"
     script.write_text(swap_script(current, new, os.getpid(), restart, **options), encoding="utf-8", newline="")
     env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
     subprocess.Popen(  # noqa: S603 — скрипт мы только что написали сами
@@ -292,7 +299,10 @@ def verify_app_signature(new_app: Path, current_app: Path, run: Runner = _run) -
     wanted = leaf_hash(designated_requirement(current_app, run))
     if not wanted:  # установленная версия подписана без постоянного сертификата: сверять нечего, остаётся SHA-256
         return
-    if leaf_hash(designated_requirement(new_app, run)) != wanted:
+    # сверяем настоящий сертификат подписи с явным условием, а не текст условия из новой программы: его пишет тот,
+    # кто подписывал, и «наш отпечаток или чужой» прошёл бы сравнение строк
+    pinned = run(["codesign", "--verify", "--deep", "--strict", f'-R=certificate leaf = H"{wanted}"', str(new_app)])
+    if pinned.returncode != 0:
         raise InstallError("Новая версия подписана другим сертификатом. Она не будет установлена")
 
 

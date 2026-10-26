@@ -449,7 +449,7 @@ class Controller:
             server = summary.LlamaServer(engine, weights)
             server_box.append(server)
             server.wait_ready(cancelled=cancelled)
-            return assistant.ChatEndpoint(server.url + "/v1", "")
+            return assistant.ChatEndpoint(server.url + "/v1", server.api_key)
 
         def stop_server() -> None:
             for server in server_box:

@@ -8,6 +8,9 @@
 # как «из интернета», поэтому не будет окна «не удаётся проверить разработчика».
 set -euo pipefail
 
+# всё тело — в функции, а вызов — последней строкой: если загрузка через curl оборвётся на середине, bash не выполнит
+# половину скрипта (например, удаление старой версии без копирования новой)
+main() {
 REPO="fedintsevqq/govorilka"
 APP="${GOVORILKA_APP:-/Applications/Govorilka.app}"  # GOVORILKA_APP и GOVORILKA_NO_OPEN — для проверки в CI
 case "$(uname -m)" in
@@ -66,3 +69,6 @@ if [[ -n "${GOVORILKA_NO_OPEN:-}" ]]; then
 fi
 echo "Готово: Говорилка в «Программах». Запускаю..."
 open "$APP"
+}
+
+main "$@"

@@ -99,7 +99,7 @@ class ChatEndpoint:
 
     @property
     def is_local(self) -> bool:
-        return self.base_url.startswith("http://127.0.0.1")
+        return net.is_loopback(self.base_url)
 
 
 def stream_chat(
@@ -123,8 +123,8 @@ def stream_chat(
                                      data=json.dumps(body).encode("utf-8"), headers=headers)
     parts: list[str] = []
     try:
-        context = None if endpoint.is_local else net.ssl_context()
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S, context=context) as response:  # noqa: S310
+        opener = net.local_opener() if endpoint.is_local else net.api_opener(net.ssl_context())
+        with opener.open(request, timeout=TIMEOUT_S) as response:
             for raw in response:
                 if cancelled():
                     break

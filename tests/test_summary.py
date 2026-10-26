@@ -128,14 +128,55 @@ def honest_server(monkeypatch):
     httpd.shutdown()
 
 
-def test_download_finishes_when_the_expected_size_is_a_little_too_big(tmp_path, honest_server):
-    # размер в каталоге был округлён вверх: после последнего байта сервер отвечает 416, и загрузка
-    # повторялась 20 раз с паузами — «качается», а прогресс стоит
+def test_download_of_exact_size_stops_at_the_last_byte(tmp_path, honest_server):
     url, data, state = honest_server
     target = tmp_path / "m.gguf"
-    summary.download_resumable(url, target, len(data) + 1000, "модель", (), lambda _s: None)
+    summary.download_resumable(url, target, len(data), "модель", (), lambda _s: None)
     assert target.read_bytes() == data
-    assert len(state["requests"]) == 2
+    assert len(state["requests"]) == 1  # после последнего байта больше ничего не просим
+
+
+def test_file_of_another_size_at_the_address_means_this_source_is_gone(tmp_path, honest_server):
+    # раньше размер округлялся вверх, и загрузка бесконечно просила «ещё»; теперь другой размер — другой файл,
+    # и качаем с запасного адреса
+    url, data, _ = honest_server
+    with pytest.raises(summary.SourceGone):
+        summary.download_resumable(url, tmp_path / "m.gguf", len(data) + 1000, "модель", (), lambda _s: None)
+
+
+def test_mirror_is_used_when_the_main_address_is_gone(tmp_path, honest_server, monkeypatch):
+    url, data, state = honest_server
+    gone = url.replace("/m.gguf", "/gone.gguf")
+    monkeypatch.setattr(summary, "LLM_DIR", tmp_path)
+    model = summary.LlmModel("m", "Модель", "", "", "m.gguf", len(data), hashlib.sha256(data).hexdigest(), 1, 2, "",
+                             mirrors=(url,))
+    monkeypatch.setattr(summary.LlmModel, "urls", property(lambda self: (gone, url)))
+
+    real_urlopen = summary.urllib.request.urlopen
+
+    def urlopen(request, *args, **kwargs):
+        if request.full_url == gone:
+            raise summary.urllib.error.HTTPError(gone, 404, "Not Found", {}, None)
+        return real_urlopen(request, *args, **kwargs)
+
+    monkeypatch.setattr(summary.urllib.request, "urlopen", urlopen)
+    assert summary.ensure_model(model, lambda _s: None).read_bytes() == data
+
+
+def test_disk_full_is_reported_at_once_and_not_retried(tmp_path, honest_server, monkeypatch):
+    url, data, state = honest_server
+    monkeypatch.setattr(summary.shutil, "disk_usage", lambda _p: type("U", (), {"free": 10})())
+    with pytest.raises(summary.DiskProblem, match="Не хватает места"):
+        summary.download_resumable(url, tmp_path / "m.gguf", len(data), "модель", (), lambda _s: None)
+    assert state["requests"] == []
+
+
+def test_unverified_file_never_gets_the_final_name(tmp_path, honest_server):
+    url, data, _ = honest_server
+    target = tmp_path / "m.gguf"
+    with pytest.raises(summary.SummaryError, match="Контрольная сумма"):
+        summary.download_resumable(url, target, len(data), "модель", (), lambda _s: None, sha256="0" * 64)
+    assert not target.exists() and not (tmp_path / "m.gguf.part").exists()
 
 
 def test_cancel_stops_the_download_even_while_it_waits_to_retry(tmp_path, monkeypatch):
@@ -285,3 +326,10 @@ def test_empty_sections_and_thinking_are_removed_from_the_answer():
     assert summary.clean_answer(raw) == "### Кратко\nОбсудили релиз.\n\n### Задачи\n- Я — тесты"
     assert summary.clean_answer("### Решения\n—\n### Задачи\n- Я — тесты") == "### Задачи\n- Я — тесты"
     assert "Нет" in summary.clean_answer("### Решения\nНет, так не пойдёт: нужно позже.")  # настоящий текст не трогаем
+
+
+def test_model_text_is_shown_without_images_links_and_html():
+    shown = summary.safe_markdown("См. ![x](https://evil/a.png?d=1) и [сайт](https://evil.com) <img src=x> "
+                                  "https://evil.com/p **жирно**, 3 < 5 > 2")
+    assert "evil/a.png" not in shown and "](" not in shown and "<img" not in shown and "https://" not in shown
+    assert "**жирно**" in shown and "сайт" in shown and "3 < 5 > 2" in shown

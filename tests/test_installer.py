@@ -99,14 +99,15 @@ def test_prepare_explains_a_folder_without_write_access(tmp_path, monkeypatch):
         installer.prepare(info_for(EXE), current, lambda _s: None)
 
 
-def run_script(tmp_path, *, lock=False, max_wait=20):
+def run_script(tmp_path, *, lock=False, max_wait=20, script_dir=None):
     """Настоящий запуск скрипта-подменителя на Windows: «старый» файл, «новый» файл и «запущенная программа»."""
     current, new = tmp_path / "Govorilka.exe", tmp_path / "Govorilka.new.exe"
     current.write_bytes(b"OLD")
     new.write_bytes(b"NEW")
-    marker, fallback_marker = tmp_path / "started.txt", tmp_path / "fallback.txt"
+    marks = script_dir or tmp_path  # отметки о запуске — рядом со скриптом: тестовая команда «cmd /c» раскрыла бы «%» сама
+    marker, fallback_marker = marks / "started.txt", marks / "fallback.txt"
     running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])
-    script = tmp_path / "update.cmd"
+    script = (script_dir or tmp_path) / "update.cmd"
     script.write_text(
         installer.swap_script(
             current, new, running.pid,
@@ -135,6 +136,14 @@ def test_swap_script_waits_for_the_program_replaces_the_file_and_starts_the_new_
     assert Path(f"{current}{installer.BACKUP_SUFFIX}").read_bytes() == b"OLD"  # прежняя версия осталась как .bak
     assert marker.exists() and not fallback_marker.exists()  # запущена новая версия
     assert not new.exists() and not script.exists()  # за собой скрипт убрал
+
+
+@windows_only
+def test_swap_script_works_in_a_folder_with_percent_signs(tmp_path):
+    folder = tmp_path / "100% работа %PATH%"  # cmd читал «%…%» как переменную, и подмена не находила файл
+    folder.mkdir()
+    current, new, marker, fallback_marker, script = run_script(folder, script_dir=tmp_path)  # скрипт — во временной папке
+    assert current.read_bytes() == b"NEW" and marker.exists() and not fallback_marker.exists()
 
 
 @windows_only
@@ -168,13 +177,17 @@ def requirement(hash_=HASH_A):
 
 
 def fake_run(hashes, *, verify_ok=True, attach_ok=True, apps=("Govorilka.app",)):
-    """Подставной codesign/hdiutil/ditto: hashes — отпечатки по порядку вызовов `codesign -d -r-`."""
+    """Подставной codesign/hdiutil/ditto: hashes — отпечатки по порядку: у установленной программы (`codesign -d -r-`)
+    и настоящий сертификат новой (`codesign --verify -R=…`)."""
     calls, queue = [], list(hashes)
 
     def run(command, timeout=300):
         calls.append(command[0])
         out = SimpleNamespace(returncode=0, stdout="", stderr="")
-        if command[0] == "codesign" and command[1] == "--verify":
+        pinned = next((arg for arg in command if arg.startswith("-R=")), "")
+        if command[0] == "codesign" and pinned:  # проверка настоящего сертификата новой программы по условию
+            out.returncode = 0 if verify_ok and queue.pop(0) in pinned else 3
+        elif command[0] == "codesign" and command[1] == "--verify":
             out.returncode = 0 if verify_ok else 1
         elif command[0] == "codesign":
             out.stderr = requirement(queue.pop(0))

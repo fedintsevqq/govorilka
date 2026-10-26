@@ -139,3 +139,88 @@ def test_dictation_recognises_real_speech_from_the_microphone(engines):
     time.sleep(1.0)
     text = dictation.finish()
     assert "коллеги" in text.lower()
+
+
+class _WavAudio:
+    """Звуковая система с настоящей речью вместо устройств: микрофон и звук компьютера отдают свои записи кусками
+    по 0,1 с в темпе, близком к живому (в 5 раз быстрее, чтобы тест не шёл минуту)."""
+
+    def __init__(self, mic: np.ndarray, system: np.ndarray) -> None:
+        self._audio = {"mic": mic, "system": system}
+
+    @staticmethod
+    def default_signature():
+        return None
+
+    def default_mic(self):
+        from govorilka.audio_base import DeviceInfo
+
+        return DeviceInfo(0, "mic", 16_000, 1)
+
+    def default_loopback(self):
+        from govorilka.audio_base import DeviceInfo
+
+        return DeviceInfo(1, "system", 16_000, 1)
+
+    def open_capture(self, device, out):
+        import threading
+        import time
+
+        from govorilka.audio_base import AudioChunk
+
+        samples = self._audio[device.name]
+        stopped = threading.Event()
+
+        def play():
+            for i in range(0, len(samples), 1600):
+                if stopped.is_set():
+                    return
+                out.put_nowait(AudioChunk(samples[i : i + 1600], i / 16_000))  # так кладут настоящие захваты
+                time.sleep(0.02)
+
+        threading.Thread(target=play, daemon=True).start()
+
+        class Capture:
+            def __init__(self):
+                self.device = device
+
+            def stop(self):
+                stopped.set()
+
+        return Capture()
+
+
+@pytest.mark.parametrize("echo_filter", [False, True])
+def test_live_recording_on_real_speech_writes_me_and_two_other_speakers(engines, tmp_path, monkeypatch, echo_filter):
+    """Живая запись целиком: настоящие модели, речь в «микрофоне» и два голоса в «звуке компьютера». Текст появляется
+    по ходу, ваши фразы подписаны «Я», собеседники различаются, транскрипт сохраняется в файл."""
+    import time
+    from dataclasses import replace
+
+    from govorilka import session as session_module
+    from govorilka.config import Settings
+
+    gap = np.zeros(16_000, dtype=np.float32)
+    mic = np.concatenate([read_wav("speech_ru.wav"), gap, np.zeros(16_000 * 12, dtype=np.float32)])
+    system = np.concatenate([np.zeros(16_000 * 2, dtype=np.float32), read_wav("zira1.wav"), gap,
+                             read_wav("irina2.wav"), gap])
+    monkeypatch.setattr(session_module, "AudioSystem", lambda: _WavAudio(mic, system))
+    monkeypatch.setattr(session_module.AudioSystem, "default_signature", staticmethod(lambda: None), raising=False)
+    settings = replace(Settings(), transcripts_dir=str(tmp_path), capture_mic=True, capture_system=True,
+                       split_speakers=True, echo_filter=echo_filter)
+    events = []
+    live = session_module.Session(settings, engines, "Проверка", events.append, lambda _s, _l: None)
+    live.start()
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not any(e.kind == "final" and e.source == "system" for e in events):
+        time.sleep(0.2)
+    time.sleep(4)  # дослушать вторую собеседницу
+    path = live.stop()
+
+    finals = [e for e in events if e.kind == "final"]
+    mine = " ".join(e.text for e in finals if e.source == "mic").lower()
+    assert "коллеги" in mine
+    assert all(e.speaker == "Я" for e in finals if e.source == "mic")
+    others = {u.speaker for u in live.transcript.utterances if u.speaker != "Я"}
+    assert len(others) >= 2, others  # два разных голоса — два собеседника
+    assert path is not None and "коллеги" in path.read_text(encoding="utf-8").lower()

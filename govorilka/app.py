@@ -59,6 +59,9 @@ def enable_crash_trace() -> None:
 
 def main() -> None:
     setup_logging()
+    from govorilka import net
+
+    net.use_system_certificates()  # до первого запроса: модели качает и huggingface_hub, у него свои сертификаты
     if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
         from govorilka.selftest import run
 
