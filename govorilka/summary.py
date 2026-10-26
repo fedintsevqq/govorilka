@@ -582,7 +582,10 @@ class LlamaServer:
         self._port = _free_port()
         self._url = f"http://127.0.0.1:{self._port}"
         self.api_key = secrets.token_urlsafe(24)
-        gpu = ["-ngl", "99"] if sys.platform == "darwin" and platform.machine() == "arm64" else ["-ngl", "0"]
+        # Apple Silicon считает на видеоядре (Metal). GOVORILKA_LLM_GPU=0 — только процессор: в виртуальных машинах
+        # (сборка в CI) Metal выдаёт бессмыслицу
+        metal = sys.platform == "darwin" and platform.machine() == "arm64" and os.environ.get("GOVORILKA_LLM_GPU") != "0"
+        gpu = ["-ngl", "99" if metal else "0"]
         command = [
             str(engine), "-m", str(model), "--host", "127.0.0.1", "--port", str(self._port),
             "-c", str(CONTEXT_TOKENS), "--threads", str(threads or max(2, (os.cpu_count() or 4) - 1)),

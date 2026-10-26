@@ -42,3 +42,6 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - name: Download the engine and the lightest model, summarise a short call
         run: python tools/check_models.py --e2e
+        env:
+          PYTHONIOENCODING: utf-8   # консоль Windows в CI не печатает кириллицу
+          GOVORILKA_LLM_GPU: "0"    # Metal в виртуальной машине GitHub считает неверно; на настоящих Mac — видеоядро
