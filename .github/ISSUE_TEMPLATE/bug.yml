@@ -1,0 +1,78 @@
+name: Ошибка
+description: Что-то не работает или работает не так, как написано
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете. Чем точнее описание, тем быстрее найдём причину. О **уязвимостях** пишите не здесь, а по правилам из [SECURITY.md](https://github.com/fedintsevqq/govorilka/security/policy).
+  - type: input
+    id: version
+    attributes:
+      label: Версия Говорилки
+      description: Её видно в настройках, раздел «Обновления».
+      placeholder: "0.3.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: Система
+      options:
+        - Windows 11
+        - Windows 10
+        - Mac на Apple Silicon (M1 и новее)
+        - Mac на Intel
+        - Другая
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: Версия системы
+      placeholder: "Windows 11 23H2 или macOS 15.6"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Где это случилось
+      options:
+        - Запись звонка
+        - Распознавание и точность
+        - Собеседники и имена
+        - Итоги
+        - Подсказки в звонке
+        - Диктовка
+        - Расшифровка файла
+        - Горячая клавиша и трей
+        - Загрузка моделей
+        - Установка и обновление
+        - Интерфейс и настройки
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что случилось
+      description: Что вы сделали, что ожидали и что получили вместо этого.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить
+      placeholder: |
+        1. Открыть настройки
+        2. ...
+  - type: textarea
+    id: log
+    attributes:
+      label: Журнал
+      description: |
+        Последние 50 строк `govorilka.log` помогают больше всего. Файл лежит в `%LOCALAPPDATA%\Govorilka` на Windows и в `~/Library/Application Support/Govorilka` на Mac. Текста разговоров в нём нет, но есть пути и имя пользователя: просмотрите перед отправкой.
+      render: text
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Скриншот
+      description: Перетащите картинку сюда, если это помогает показать проблему.

@@ -1,0 +1,14 @@
+# Как GitHub группирует автоматические заметки к релизу (кнопка «Generate release notes»)
+changelog:
+  exclude:
+    labels: ["skip-changelog"]
+    authors: ["dependabot[bot]"]
+  categories:
+    - title: Новое
+      labels: ["enhancement"]
+    - title: Исправления
+      labels: ["bug"]
+    - title: Интерфейс и тексты
+      labels: ["accessibility", "documentation"]
+    - title: Прочее
+      labels: ["*"]

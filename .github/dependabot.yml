@@ -1,0 +1,26 @@
+# Обновления зависимостей: Dependabot раз в неделю открывает pull request, CI проверяет его тестами и сборкой.
+# Версии Python-пакетов в requirements.txt закреплены точно (сборка должна повторяться), поэтому обновления
+# приходят отдельными pull request, а не молча.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        update-types: ["minor", "patch"]

@@ -1,0 +1,37 @@
+name: Идея
+description: Что хотелось бы добавить или улучшить
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Расскажите о задаче, а не только о том, как это должно выглядеть. Так проще понять, подходит ли идея проекту. Если не уверены, начните с [обсуждения](https://github.com/fedintsevqq/govorilka/discussions).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу вы решаете
+      description: Что вы делаете сейчас и что неудобно.
+      placeholder: "Я записываю созвоны с клиентами и каждый раз вручную ..."
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Что предлагаете
+      description: Как бы это могло работать. Можно с эскизом.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Что пробовали вместо этого
+      description: Другие программы или обходные пути.
+  - type: dropdown
+    id: system
+    attributes:
+      label: Для какой системы
+      multiple: true
+      options:
+        - Windows
+        - Mac
+        - Не важно

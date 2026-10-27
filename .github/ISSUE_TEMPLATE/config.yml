@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопрос или обсуждение
+    url: https://github.com/fedintsevqq/govorilka/discussions
+    about: Как пользоваться, что выбрать, почему так работает. Здесь отвечают быстрее и ответы видят другие.
+  - name: Сообщить об уязвимости
+    url: https://github.com/fedintsevqq/govorilka/security/advisories/new
+    about: Закрытое сообщение, которое видит только владелец проекта. Не открывайте публичное обращение.
+  - name: Руководство пользователя
+    url: https://github.com/fedintsevqq/govorilka/blob/main/docs/guide.md
+    about: Ответ на ваш вопрос может быть уже здесь.
