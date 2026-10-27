@@ -39,7 +39,7 @@
 
 ## Возможности
 
-| | |
+| Возможность | Что делает |
 |---|---|
 | **Текст по ходу звонка** | Микрофон и звук компьютера отдельно, у каждого собеседника свой цвет и номер. Имена подставляются из разговора («меня зовут Аня») или вписываются вручную. |
 | **Итоги и задачи** | Кратко, решения, кто что делает и к какому сроку, открытые вопросы. Пишет языковая модель на вашем же компьютере (Qwen или YandexGPT). |
@@ -53,11 +53,11 @@
 <table>
   <tr>
     <td width="50%"><img src="site/img/summary.png" alt="Вкладка «Итоги»: кратко, решения, задачи и открытые вопросы"></td>
-    <td width="50%"><img src="site/img/hints.png" alt="Кнопка «Подсказки» в шапке окна и её панель"></td>
+    <td width="50%"><img src="site/img/hints-card.png" alt="Окно подсказки: ответ на вопрос собеседника, которого не видно при демонстрации экрана"></td>
   </tr>
   <tr>
     <td align="center"><sub>Итоги созвона на локальной модели</sub></td>
-    <td align="center"><sub>Подсказки в звонке: модель на компьютере или своя нейросеть</sub></td>
+    <td align="center"><sub>Подсказка во время звонка: ответ видите только вы</sub></td>
   </tr>
 </table>
 
@@ -65,11 +65,25 @@
 
 Работает на **Windows 10 и 11**, на Mac с **Apple Silicon** (M1 и новее, macOS 14+) и на Mac с **Intel** (macOS 13+).
 
-| Система | Одной командой | Или файл |
-|---|---|---|
-| **Windows** | `irm https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.ps1 \| iex` | [`windows-x64.exe`](https://github.com/fedintsevqq/govorilka/releases/latest) |
-| **Mac** | `curl -fsSL https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.sh \| bash` | [`apple-silicon.dmg`](https://github.com/fedintsevqq/govorilka/releases/latest) или [`intel.dmg`](https://github.com/fedintsevqq/govorilka/releases/latest) |
-| **Mac, Homebrew** | `brew install --cask fedintsevqq/tap/govorilka` | |
+**Windows**, PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.ps1 | iex
+```
+
+**Mac**, Терминал:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fedintsevqq/govorilka/main/install.sh | bash
+```
+
+**Mac через Homebrew:**
+
+```bash
+brew install --cask fedintsevqq/tap/govorilka
+```
+
+Или скачайте файл со страницы [релизов](https://github.com/fedintsevqq/govorilka/releases/latest): `windows-x64.exe` для Windows, `apple-silicon.dmg` для Mac с чипом M1 и новее, `intel.dmg` для Mac с Intel. Какой у вас чип, видно в меню Apple, «Об этом Mac».
 
 Команда ставит программу без предупреждений «неизвестный издатель»: скрипт сам скачивает последний релиз с GitHub и сверяет его контрольную сумму. При первом запуске Говорилка скачает модели (около 880 МБ) и покажет процент. Дальше интернет не нужен.
 

@@ -94,6 +94,18 @@ def brand(width: int, height: int, scale: float, shot_x: float, shot_width: int,
     print(name, canvas.size)
 
 
+def hints_card(width: int = 742, height: int = 572) -> None:
+    """Окно подсказки (снимок tools/shots.py, assistant-window.png) на фирменном фоне, в размер скриншота «Итогов»."""
+    canvas = background(width, height).convert("RGBA")
+    window = Image.open(OUT / "assistant-window.png").convert("RGB")
+    target = int(width * 0.74)
+    window = window.resize((target, int(target * window.height / window.width)), Image.LANCZOS)
+    paste_with_shadow(canvas, window, ((width - window.width) // 2, (height - window.height) // 2), 22)
+    canvas.convert("RGB").save(OUT / "hints-card.png", optimize=True)
+    print("hints-card.png", canvas.size)
+
+
 if __name__ == "__main__":
     brand(1280, 640, 1.0, 0.55, 800, True, "social-preview.png")
     brand(1280, 360, 0.62, 0.60, 560, False, "banner.png")
+    hints_card()
