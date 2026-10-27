@@ -21,6 +21,11 @@ updates:
     commit-message:
       prefix: "deps"
     open-pull-requests-limit: 5
+    # onnxruntime: после 1.23.2 нет колёс для Mac на Intel. PySide6: с 6.12 нужен macOS 14, а мы держим 13.
+    ignore:
+      - dependency-name: "onnxruntime"
+      - dependency-name: "PySide6-Essentials"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       python:
         update-types: ["minor", "patch"]
