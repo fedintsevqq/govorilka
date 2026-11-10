@@ -308,8 +308,12 @@ def test_copy_in_another_process_holds_the_lock(tmp_path):
     lock.close()
 
 
-def test_mac_light_poll_skips_the_key_scan_until_a_modifier_is_held():
+def test_mac_light_poll_skips_the_key_scan_until_a_modifier_is_held(monkeypatch):
     from govorilka import hotkeys
+
+    # Разрешение «Мониторинг ввода» живёт в TCC и на машине разработчика его может не быть:
+    # без него snapshot() вообще не опрашивает клавиши, и проверка ниже ничего не проверит.
+    monkeypatch.setattr(hotkeys, "input_monitoring_status", lambda: True)
 
     scanned = []
     keyboard = hotkeys.MacKeyboard.__new__(hotkeys.MacKeyboard)
