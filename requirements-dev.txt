@@ -1,4 +1,4 @@
-﻿-r requirements.txt
-pytest==9.1.1
+-r requirements.txt
+pytest==9.2.0
 pyinstaller==6.22.3
 Pillow==13.0.0  # tools/make_icons.py собирает .ico и .icns
